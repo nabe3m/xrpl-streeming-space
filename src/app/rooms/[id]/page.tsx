@@ -8,6 +8,9 @@ import { useAgora } from "~/hooks/useAgora";
 import { api } from "~/trpc/react";
 import { AudioLevelIndicator } from "~/components/AudioLevelIndicator";
 import type { ParticipantWithAllFields } from "~/lib/types";
+import { RoomInfo } from "~/components/room/RoomInfo";
+import { HostControls } from "~/components/room/HostControls";
+import { ParticipantsList } from "~/components/room/ParticipantsList";
 
 export default function RoomPage() {
   const params = useParams();
@@ -1233,38 +1236,10 @@ export default function RoomPage() {
     <main className="min-h-screen bg-gradient-to-b from-[#1a1b3a] to-[#0f0f23] text-white">
       <div className="container mx-auto px-4 py-8">
         <div className="mx-auto max-w-4xl">
-          <div className="mb-6 rounded-lg bg-white/10 p-6">
-            <h1 className="mb-4 font-bold text-3xl">{room.title}</h1>
-            {room.description && (
-              <p className="mb-4 text-gray-300">{room.description}</p>
-            )}
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-400 text-sm">
-                  Host:{" "}
-                  {room.creator.nickname ||
-                    room.creator.walletAddress.slice(0, 8)}
-                  ...
-                </p>
-                <p className="text-sm text-yellow-400">
-                  料金: {room.xrpPerMinute} XRP/分
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-gray-400 text-sm">
-                  状態:{" "}
-                  {room.status === "LIVE"
-                    ? "配信中"
-                    : room.status === "WAITING"
-                      ? "開始前"
-                      : "終了"}
-                </p>
-                <p className="text-gray-400 text-sm">
-                  参加者: {room.participants.length}人
-                </p>
-              </div>
-            </div>
-          </div>
+          <RoomInfo 
+            room={room as any} 
+            participantCount={room.participants.length} 
+          />
 
           <div className="rounded-lg bg-white/10 p-6">
             {/* デバッグ用テストボタン */}
@@ -1953,88 +1928,22 @@ export default function RoomPage() {
                     </button>
                   </div>
                   {isHost && (
-                    <div className="flex gap-2">
-                      {room.status === "WAITING" && (
-                        <button
-                          type="button"
-                          onClick={handleStartRoom}
-                          className="rounded-full bg-green-600 px-6 py-2 font-semibold transition hover:bg-green-700"
-                        >
-                          配信開始
-                        </button>
-                      )}
-                      {room.status === "LIVE" && (
-                        <button
-                          type="button"
-                          onClick={handleEndRoom}
-                          className="rounded-full bg-red-600 px-6 py-2 font-semibold transition hover:bg-red-700"
-                        >
-                          配信終了
-                        </button>
-                      )}
-                    </div>
+                    <HostControls
+                      roomStatus={room.status}
+                      roomId={roomId}
+                      onStartRoom={handleStartRoom}
+                      onEndRoom={handleEndRoom}
+                    />
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-                  {room.participants.length > 0 ? (
-                    (room.participants as ParticipantWithAllFields[]).map(
-                      (p) => (
-                        <div key={p.id} className="rounded-lg bg-white/5 p-4">
-                          <p className="font-semibold">
-                            {p.user.nickname ||
-                              p.user.walletAddress.slice(0, 8)}
-                            ...
-                          </p>
-                          <p className="text-gray-400 text-sm">
-                            {p.role === "HOST"
-                              ? "ホスト"
-                              : p.canSpeak
-                                ? "スピーカー"
-                                : "リスナー"}
-                          </p>
-                          {p.speakRequestedAt && !p.canSpeak && (
-                            <p className="mt-1 text-xs text-yellow-400">
-                              発言権リクエスト中
-                            </p>
-                          )}
-                          {isHost && p.role !== "HOST" && (
-                            <div className="mt-2 flex gap-2">
-                              {!p.canSpeak && p.speakRequestedAt && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    console.log("🚀 Granting speak permission", { roomId, participantId: p.id, participant: p });
-                                    grantSpeak({ roomId, participantId: p.id });
-                                  }}
-                                  className="rounded bg-green-600 px-3 py-1 text-xs hover:bg-green-700"
-                                >
-                                  許可
-                                </button>
-                              )}
-                              {p.canSpeak && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    console.log("🚀 Revoking speak permission", { roomId, participantId: p.id, participant: p });
-                                    revokeSpeak({ roomId, participantId: p.id });
-                                  }}
-                                  className="rounded bg-red-600 px-3 py-1 text-xs hover:bg-red-700"
-                                >
-                                  取消
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ),
-                    )
-                  ) : (
-                    <p className="col-span-full text-center text-gray-400">
-                      参加者はまだいません
-                    </p>
-                  )}
-                </div>
+                <ParticipantsList
+                  participants={room.participants as ParticipantWithAllFields[]}
+                  isHost={isHost}
+                  roomId={roomId}
+                  onGrantSpeak={(participantId) => grantSpeak({ roomId, participantId })}
+                  onRevokeSpeak={(participantId) => revokeSpeak({ roomId, participantId })}
+                />
 
                 {/* 音声状態の表示 */}
                 <div className="mt-6 text-gray-400 text-sm">
