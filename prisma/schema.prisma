@@ -1,0 +1,136 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "sqlite"
+    url      = env("DATABASE_URL")
+}
+
+model User {
+    id              String   @id @default(cuid())
+    walletAddress   String   @unique
+    nickname        String?
+    avatarUrl       String?
+    emailHash       String?
+    twitterHandle   String?
+    facebookHandle  String?
+    instagramHandle String?
+    createdAt       DateTime @default(now())
+    updatedAt       DateTime @updatedAt
+
+    // Relations
+    createdRooms    Room[]
+    roomParticipants RoomParticipant[]
+    sentPaymentChannels PaymentChannel[] @relation("Sender")
+    receivedPaymentChannels PaymentChannel[] @relation("Receiver")
+    mintedNFTs      NFT[]
+
+    @@index([walletAddress])
+}
+
+model Room {
+    id                String   @id @default(cuid())
+    title             String
+    description       String?
+    creatorId         String
+    creator           User     @relation(fields: [creatorId], references: [id])
+    agoraChannelName  String   @unique
+    xrpPerMinute      Float    @default(0.01)
+    nftTokenId        String?  // NFT token ID for entry restriction
+    nftCollectionId   String?  // NFT collection ID for entry restriction
+    status            RoomStatus @default(WAITING)
+    startedAt         DateTime?
+    endedAt           DateTime?
+    createdAt         DateTime @default(now())
+    updatedAt         DateTime @updatedAt
+
+    // Relations
+    participants      RoomParticipant[]
+    paymentChannels   PaymentChannel[]
+
+    @@index([creatorId])
+    @@index([status])
+}
+
+model RoomParticipant {
+    id              String   @id @default(cuid())
+    roomId          String
+    room            Room     @relation(fields: [roomId], references: [id])
+    userId          String
+    user            User     @relation(fields: [userId], references: [id])
+    role            ParticipantRole @default(LISTENER)
+    joinedAt        DateTime @default(now())
+    leftAt          DateTime?
+    totalTimeSeconds Int      @default(0)
+    totalPaidXrp    Float    @default(0)
+    canSpeak        Boolean  @default(false) // リスナーが発言権を持っているか
+    speakRequestedAt DateTime? // 発言権をリクエストした時刻
+
+    @@unique([roomId, userId])
+    @@index([roomId])
+    @@index([userId])
+}
+
+model PaymentChannel {
+    id              String   @id @default(cuid())
+    channelId       String   @unique
+    roomId          String
+    room            Room     @relation(fields: [roomId], references: [id])
+    senderId        String
+    sender          User     @relation("Sender", fields: [senderId], references: [id])
+    receiverId      String
+    receiver        User     @relation("Receiver", fields: [receiverId], references: [id])
+    amount          String   // Total amount in drops
+    balance         String   @default("0") // Current balance in drops
+    settleDelay     Int      @default(86400)
+    publicKey       String
+    status          ChannelStatus @default(OPEN)
+    lastSignature   String?
+    lastAmount      String?  // Last signed amount in drops
+    createdAt       DateTime @default(now())
+    updatedAt       DateTime @updatedAt
+    closedAt        DateTime?
+
+    @@index([roomId])
+    @@index([senderId])
+    @@index([receiverId])
+    @@index([status])
+}
+
+model NFT {
+    id              String   @id @default(cuid())
+    tokenId         String   @unique
+    creatorId       String
+    creator         User     @relation(fields: [creatorId], references: [id])
+    title           String
+    description     String?
+    imageUrl        String
+    metadataUri     String
+    roomId          String?
+    transactionHash String
+    createdAt       DateTime @default(now())
+
+    @@index([creatorId])
+    @@index([tokenId])
+}
+
+enum RoomStatus {
+    WAITING
+    LIVE
+    ENDED
+}
+
+enum ParticipantRole {
+    HOST
+    LISTENER
+}
+
+enum ChannelStatus {
+    OPEN
+    CLOSING
+    CLOSED
+}

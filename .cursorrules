@@ -1,0 +1,100 @@
+# XRPL Clubhouse Development Rules
+
+## Overview
+This project is a XRPL-based audio streaming service similar to X Spaces, built with the T3 Stack.
+
+## Tech Stack
+- Framework: Next.js 15 with App Router
+- Language: TypeScript
+- Database: Prisma with SQLite (local) / Neon (production)
+- API: tRPC
+- Styling: Tailwind CSS 4
+- XRPL Integration: xrpl.js, Xumm SDK
+- Audio Streaming: Agora SDK
+- Linting: Biome
+
+## Code Style Guidelines
+
+### General
+- Use functional components with hooks
+- Prefer async/await over promises
+- Use TypeScript strict mode
+- Keep components small and focused
+- Extract business logic to custom hooks or server functions
+
+### File Organization
+```
+src/
+├── app/          # Next.js app router pages
+├── components/   # Reusable UI components
+├── contexts/     # React contexts
+├── hooks/        # Custom React hooks
+├── lib/          # Utility functions and external integrations
+├── server/       # Server-side code
+│   ├── api/      # tRPC routers
+│   └── db.ts     # Prisma client
+├── styles/       # Global styles
+└── trpc/         # tRPC client configuration
+```
+
+### Naming Conventions
+- Components: PascalCase (e.g., `UserProfile.tsx`)
+- Utilities: camelCase (e.g., `formatXRP.ts`)
+- Constants: UPPER_SNAKE_CASE (e.g., `MAX_ROOM_SIZE`)
+- Types/Interfaces: PascalCase with descriptive names
+
+### Security Considerations
+- Never expose private keys or secrets in client code
+- Validate all user inputs on the server
+- Use environment variables for sensitive configuration
+- Implement proper XRPL wallet security practices
+- Sanitize user-generated content
+
+### XRPL Best Practices
+- Always use testnet for development
+- Handle XRPL connection errors gracefully
+- Implement proper error handling for transactions
+- Use off-ledger payment channels for micro-transactions
+- Cache XRPL data when appropriate
+
+### Database Patterns
+- Use Prisma's type-safe queries
+- Implement proper indexes for performance
+- Use transactions for related operations
+- Keep models normalized
+
+### tRPC Patterns
+- Use `publicProcedure` for unauthenticated endpoints
+- Use `protectedProcedure` for authenticated endpoints
+- Return meaningful error messages
+- Implement proper input validation with Zod
+
+### React Patterns
+- Use React.memo for expensive components
+- Implement proper loading and error states
+- Use Suspense boundaries where appropriate
+- Optimize re-renders with proper dependency arrays
+
+### Testing (when implemented)
+- Write unit tests for utility functions
+- Test tRPC procedures independently
+- Mock external services (XRPL, Agora)
+- Test critical user flows
+
+### Performance
+- Lazy load components when possible
+- Optimize images and assets
+- Implement proper caching strategies
+- Use React Query for data fetching
+
+### Git Commit Messages
+- Use conventional commits format
+- Be descriptive but concise
+- Reference issue numbers when applicable
+
+### Development Workflow
+1. Always run `npm run typecheck` before committing
+2. Use `npm run check:write` for Biome formatting
+3. Test on XRPL testnet before mainnet
+4. Document complex business logic
+5. Keep PR scope focused and reviewable

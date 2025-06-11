@@ -1,0 +1,126 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+node_modules/
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# testing
+/coverage
+
+# database
+/prisma/dev.db
+/prisma/dev.db-journal
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# local env files
+# do not commit any .env files to git, except for the .env.example file. https://create.t3.gg/en/usage/env-variables#using-environment-variables
+.env*.local
+.env
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+
+# idea files
+.idea
+
+# vscode
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# os
+Thumbs.db
+
+# logs
+logs/
+*.log
+
+# runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# optional npm cache directory
+.npm
+
+# optional eslint cache
+.eslintcache
+
+# microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# optional repl history
+.node_repl_history
+
+# output of 'npm pack'
+*.tgz
+
+# yarn integrity file
+.yarn-integrity
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# next.js build output
+.next
+
+# nuxt.js build / generate output
+.nuxt
+dist
+
+# storybook build outputs
+.out
+.storybook-out
+
+# temporary folders
+tmp/
+temp/
+
+# editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# xrpl specific
+/xrpl-data/
+
+# turbo
+.turbo
+
+# Backup files
+*.backup
+*.bak
+*.orig

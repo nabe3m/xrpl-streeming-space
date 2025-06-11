@@ -1,0 +1,520 @@
+import { TRPCError } from '@trpc/server';
+import { z } from 'zod';
+import { generateAgoraToken } from '~/lib/agora';
+import { getSignatureWallet } from '~/lib/xrpl';
+import { createTRPCRouter, protectedProcedure, publicProcedure } from '~/server/api/trpc';
+
+export const roomRouter = createTRPCRouter({
+	create: protectedProcedure
+		.input(
+			z.object({
+				title: z.string().min(1).max(100),
+				description: z.string().optional(),
+				xrpPerMinute: z.number().min(0).default(0.01),
+				nftTokenId: z.string().optional(),
+				nftCollectionId: z.string().optional(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const agoraChannelName = `room_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+			const room = await ctx.db.room.create({
+				data: {
+					title: input.title,
+					description: input.description,
+					creatorId: ctx.session.userId,
+					agoraChannelName,
+					xrpPerMinute: input.xrpPerMinute,
+					nftTokenId: input.nftTokenId,
+					nftCollectionId: input.nftCollectionId,
+				},
+				include: {
+					creator: true,
+				},
+			});
+
+			await ctx.db.roomParticipant.create({
+				data: {
+					roomId: room.id,
+					userId: ctx.session.userId,
+					role: 'HOST',
+				},
+			});
+
+			return room;
+		}),
+
+	get: publicProcedure
+		.input(
+			z.object({
+				id: z.string(),
+			}),
+		)
+		.query(async ({ ctx, input }) => {
+			const room = await ctx.db.room.findUnique({
+				where: { id: input.id },
+				include: {
+					creator: true,
+					participants: {
+						where: {
+							leftAt: null, // 退出していない参加者のみ取得
+						},
+						include: {
+							user: true,
+						},
+					},
+					paymentChannels: true,
+				},
+			});
+
+			if (!room) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Room not found',
+				});
+			}
+
+			return room;
+		}),
+
+	list: publicProcedure
+		.input(
+			z.object({
+				status: z.enum(['WAITING', 'LIVE', 'ENDED']).optional(),
+				limit: z.number().min(1).max(100).default(20),
+				cursor: z.string().optional(),
+			}),
+		)
+		.query(async ({ ctx, input }) => {
+			const rooms = await ctx.db.room.findMany({
+				where: input.status ? { status: input.status } : undefined,
+				take: input.limit + 1,
+				cursor: input.cursor ? { id: input.cursor } : undefined,
+				orderBy: { createdAt: 'desc' },
+				include: {
+					creator: true,
+				},
+			});
+
+			// 各ルームのアクティブな参加者数を取得
+			const roomsWithCount = await Promise.all(
+				rooms.map(async (room) => {
+					const activeParticipants = await ctx.db.roomParticipant.count({
+						where: {
+							roomId: room.id,
+							leftAt: null,
+						},
+					});
+					return {
+						...room,
+						_count: {
+							participants: activeParticipants,
+						},
+					};
+				}),
+			);
+
+			let nextCursor: typeof input.cursor | undefined = undefined;
+			if (roomsWithCount.length > input.limit) {
+				const nextItem = roomsWithCount.pop();
+				nextCursor = nextItem!.id;
+			}
+
+			return {
+				items: roomsWithCount,
+				nextCursor,
+			};
+		}),
+
+	join: protectedProcedure
+		.input(
+			z.object({
+				roomId: z.string(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const room = await ctx.db.room.findUnique({
+				where: { id: input.roomId },
+				include: {
+					creator: true,
+				},
+			});
+
+			if (!room) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Room not found',
+				});
+			}
+
+			if (room.status === 'ENDED') {
+				throw new TRPCError({
+					code: 'BAD_REQUEST',
+					message: 'Room has ended',
+				});
+			}
+
+			const existingParticipant = await ctx.db.roomParticipant.findUnique({
+				where: {
+					roomId_userId: {
+						roomId: input.roomId,
+						userId: ctx.session.userId,
+					},
+				},
+			});
+
+			if (existingParticipant) {
+				// 既存の参加者が再参加する場合、leftAtをリセット
+				if (existingParticipant.leftAt) {
+					const updated = await ctx.db.roomParticipant.update({
+						where: { id: existingParticipant.id },
+						data: {
+							leftAt: null,
+							joinedAt: new Date(), // 再参加時刻を更新
+						},
+					});
+					return updated;
+				}
+				return existingParticipant;
+			}
+
+			const participant = await ctx.db.roomParticipant.create({
+				data: {
+					roomId: input.roomId,
+					userId: ctx.session.userId,
+					role: 'LISTENER',
+				},
+			});
+
+			return participant;
+		}),
+
+	leave: protectedProcedure
+		.input(
+			z.object({
+				roomId: z.string(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const participant = await ctx.db.roomParticipant.findUnique({
+				where: {
+					roomId_userId: {
+						roomId: input.roomId,
+						userId: ctx.session.userId,
+					},
+				},
+			});
+
+			if (!participant) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Participant not found',
+				});
+			}
+
+			const now = new Date();
+			const timeInRoom = Math.floor((now.getTime() - participant.joinedAt.getTime()) / 1000);
+
+			await ctx.db.roomParticipant.update({
+				where: { id: participant.id },
+				data: {
+					leftAt: now,
+					totalTimeSeconds: participant.totalTimeSeconds + timeInRoom,
+				},
+			});
+
+			return { success: true };
+		}),
+
+	start: protectedProcedure
+		.input(
+			z.object({
+				roomId: z.string(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const room = await ctx.db.room.findUnique({
+				where: { id: input.roomId },
+			});
+
+			if (!room) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Room not found',
+				});
+			}
+
+			if (room.creatorId !== ctx.session.userId) {
+				throw new TRPCError({
+					code: 'FORBIDDEN',
+					message: 'Only room creator can start the room',
+				});
+			}
+
+			if (room.status !== 'WAITING') {
+				throw new TRPCError({
+					code: 'BAD_REQUEST',
+					message: 'Room is not in waiting status',
+				});
+			}
+
+			const updatedRoom = await ctx.db.room.update({
+				where: { id: input.roomId },
+				data: {
+					status: 'LIVE',
+					startedAt: new Date(),
+				},
+			});
+
+			return updatedRoom;
+		}),
+
+	end: protectedProcedure
+		.input(
+			z.object({
+				roomId: z.string(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const room = await ctx.db.room.findUnique({
+				where: { id: input.roomId },
+			});
+
+			if (!room) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Room not found',
+				});
+			}
+
+			if (room.creatorId !== ctx.session.userId) {
+				throw new TRPCError({
+					code: 'FORBIDDEN',
+					message: 'Only room creator can end the room',
+				});
+			}
+
+			if (room.status !== 'LIVE') {
+				throw new TRPCError({
+					code: 'BAD_REQUEST',
+					message: 'Room is not live',
+				});
+			}
+
+			const now = new Date();
+
+			await ctx.db.roomParticipant.updateMany({
+				where: {
+					roomId: input.roomId,
+					leftAt: null,
+				},
+				data: {
+					leftAt: now,
+				},
+			});
+
+			const updatedRoom = await ctx.db.room.update({
+				where: { id: input.roomId },
+				data: {
+					status: 'ENDED',
+					endedAt: now,
+				},
+			});
+
+			return updatedRoom;
+		}),
+
+	getSignaturePublicKey: publicProcedure.query(async () => {
+		try {
+			const wallet = await getSignatureWallet();
+			return { publicKey: wallet.publicKey };
+		} catch (error) {
+			throw new TRPCError({
+				code: 'INTERNAL_SERVER_ERROR',
+				message: 'Failed to get signature public key',
+			});
+		}
+	}),
+
+	getAgoraToken: protectedProcedure
+		.input(
+			z.object({
+				roomId: z.string(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const participant = await ctx.db.roomParticipant.findUnique({
+				where: {
+					roomId_userId: {
+						roomId: input.roomId,
+						userId: ctx.session.userId,
+					},
+				},
+				include: {
+					room: true,
+				},
+			});
+
+			if (!participant) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Participant not found',
+				});
+			}
+
+			try {
+				// ロールを決定（ホストまたは発言権を持つリスナーはPUBLISHERトークンを取得）
+				const tokenRole = participant.role === 'HOST' || participant.canSpeak ? 'HOST' : 'LISTENER';
+
+				const token = generateAgoraToken(
+					participant.room.agoraChannelName,
+					ctx.session.userId,
+					tokenRole,
+					3600, // 1 hour expiration
+				);
+
+				return { token };
+			} catch (error) {
+				throw new TRPCError({
+					code: 'INTERNAL_SERVER_ERROR',
+					message: 'Failed to generate Agora token',
+				});
+			}
+		}),
+
+	requestSpeak: protectedProcedure
+		.input(
+			z.object({
+				roomId: z.string(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const participant = await ctx.db.roomParticipant.findUnique({
+				where: {
+					roomId_userId: {
+						roomId: input.roomId,
+						userId: ctx.session.userId,
+					},
+				},
+			});
+
+			if (!participant) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Participant not found',
+				});
+			}
+
+			if (participant.role === 'HOST') {
+				throw new TRPCError({
+					code: 'BAD_REQUEST',
+					message: 'Host already has speaking permission',
+				});
+			}
+
+			if (participant.canSpeak) {
+				throw new TRPCError({
+					code: 'BAD_REQUEST',
+					message: 'Already has speaking permission',
+				});
+			}
+
+			const updated = await ctx.db.roomParticipant.update({
+				where: { id: participant.id },
+				data: {
+					speakRequestedAt: new Date(),
+				},
+			});
+
+			return updated;
+		}),
+
+	grantSpeak: protectedProcedure
+		.input(
+			z.object({
+				roomId: z.string(),
+				participantId: z.string(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			// ホストかどうか確認
+			const room = await ctx.db.room.findUnique({
+				where: { id: input.roomId },
+			});
+
+			if (!room || room.creatorId !== ctx.session.userId) {
+				throw new TRPCError({
+					code: 'FORBIDDEN',
+					message: 'Only room host can grant speak permission',
+				});
+			}
+
+			const participant = await ctx.db.roomParticipant.findFirst({
+				where: {
+					id: input.participantId,
+					roomId: input.roomId,
+				},
+			});
+
+			if (!participant) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Participant not found',
+				});
+			}
+
+			const updated = await ctx.db.roomParticipant.update({
+				where: { id: participant.id },
+				data: {
+					canSpeak: true,
+					speakRequestedAt: null,
+				},
+			});
+
+			return updated;
+		}),
+
+	revokeSpeak: protectedProcedure
+		.input(
+			z.object({
+				roomId: z.string(),
+				participantId: z.string(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			// ホストかどうか確認
+			const room = await ctx.db.room.findUnique({
+				where: { id: input.roomId },
+			});
+
+			if (!room || room.creatorId !== ctx.session.userId) {
+				throw new TRPCError({
+					code: 'FORBIDDEN',
+					message: 'Only room host can revoke speak permission',
+				});
+			}
+
+			const participant = await ctx.db.roomParticipant.findFirst({
+				where: {
+					id: input.participantId,
+					roomId: input.roomId,
+				},
+			});
+
+			if (!participant) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Participant not found',
+				});
+			}
+
+			const updated = await ctx.db.roomParticipant.update({
+				where: { id: participant.id },
+				data: {
+					canSpeak: false,
+				},
+			});
+
+			return updated;
+		}),
+});
