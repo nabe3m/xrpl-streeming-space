@@ -1,0 +1,56 @@
+import { AudioLevelIndicator } from '~/components/AudioLevelIndicator';
+import type { ParticipantWithAllFields } from '~/lib/types';
+
+interface AudioLevelDisplayProps {
+	isPublished: boolean;
+	localAudioLevel: number;
+	isMuted: boolean;
+	remoteAudioLevels: Map<string | number, number> | null;
+	participants: ParticipantWithAllFields[];
+}
+
+export function AudioLevelDisplay({
+	isPublished,
+	localAudioLevel,
+	isMuted,
+	remoteAudioLevels,
+	participants,
+}: AudioLevelDisplayProps) {
+	return (
+		<>
+			{/* Local Audio Level */}
+			{isPublished && (
+				<div className="mt-4">
+					<AudioLevelIndicator level={localAudioLevel} label="自分の音声" isMuted={isMuted} />
+				</div>
+			)}
+
+			{/* Remote Audio Levels */}
+			{remoteAudioLevels && remoteAudioLevels.size > 0 && (
+				<div className="mt-4 space-y-2">
+					<p className="font-semibold text-gray-300 text-xs">接続中のユーザー音声レベル:</p>
+					{Array.from(remoteAudioLevels.entries()).map(([uid, level]) => {
+						// Find the participant by matching the uid
+						const remoteParticipant = participants.find((p) => {
+							// Generate uid from userId
+							let userUid = 0;
+							for (let i = 0; i < p.userId.length; i++) {
+								const hash = (userUid << 5) - userUid + p.userId.charCodeAt(i);
+								userUid = hash & hash;
+							}
+							userUid = Math.abs(userUid) % 1000000;
+							return userUid === Number(uid);
+						});
+
+						const label = remoteParticipant
+							? remoteParticipant.user.nickname ||
+								remoteParticipant.user.walletAddress.slice(0, 8) + '...'
+							: `User ${uid}`;
+
+						return <AudioLevelIndicator key={uid} level={level} label={label} />;
+					})}
+				</div>
+			)}
+		</>
+	);
+}

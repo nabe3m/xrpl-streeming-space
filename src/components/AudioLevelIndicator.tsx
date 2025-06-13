@@ -13,30 +13,24 @@ export function AudioLevelIndicator({ level, label, isMuted = false }: AudioLeve
 
 	return (
 		<div className="flex items-center gap-2">
-			<span className="text-xs text-gray-400 w-20">{label}</span>
-			<div className="flex gap-1 items-end h-4">
+			<span className="w-20 text-gray-400 text-xs">{label}</span>
+			<div className="flex h-4 items-end gap-1">
 				{Array.from({ length: bars }).map((_, i) => {
 					const isActive = i < activeBarCount && !isMuted;
-					const height = `${20 + (i * 20)}%`; // 20%, 40%, 60%, 80%, 100%
-					
+					const height = `${20 + i * 20}%`; // 20%, 40%, 60%, 80%, 100%
+
 					return (
 						<div
 							key={i}
 							className={`w-1 transition-all duration-100 ${
-								isActive 
-									? 'bg-green-400' 
-									: isMuted 
-										? 'bg-red-600 opacity-30'
-										: 'bg-gray-600'
+								isActive ? 'bg-green-400' : isMuted ? 'bg-red-600 opacity-30' : 'bg-gray-600'
 							}`}
 							style={{ height }}
 						/>
 					);
 				})}
 			</div>
-			{isMuted && (
-				<span className="text-xs text-red-400 ml-2">ミュート中</span>
-			)}
+			{isMuted && <span className="ml-2 text-red-400 text-xs">ミュート中</span>}
 		</div>
 	);
 }

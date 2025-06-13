@@ -46,9 +46,8 @@ export default function CloseChannelsDevPage() {
 
 				// Filter for PayChannel objects where we are the destination
 				const allObjects = (response.result as any).account_objects || [];
-				const incomingChannels = allObjects.filter((obj: any) => 
-					obj.LedgerEntryType === 'PayChannel' && 
-					obj.Destination === address
+				const incomingChannels = allObjects.filter(
+					(obj: any) => obj.LedgerEntryType === 'PayChannel' && obj.Destination === address,
 				);
 
 				// Transform to match the channel format
@@ -79,15 +78,13 @@ export default function CloseChannelsDevPage() {
 		if (selectedChannels.length === channels.length) {
 			setSelectedChannels([]);
 		} else {
-			setSelectedChannels(channels.map(ch => ch.channel_id));
+			setSelectedChannels(channels.map((ch) => ch.channel_id));
 		}
 	};
 
 	const handleToggleChannel = (channelId: string) => {
-		setSelectedChannels(prev => 
-			prev.includes(channelId) 
-				? prev.filter(id => id !== channelId)
-				: [...prev, channelId]
+		setSelectedChannels((prev) =>
+			prev.includes(channelId) ? prev.filter((id) => id !== channelId) : [...prev, channelId],
 		);
 	};
 
@@ -108,7 +105,7 @@ export default function CloseChannelsDevPage() {
 			setIsClosing(true);
 
 			for (const channelId of selectedChannels) {
-				const channel = channels.find(ch => ch.channel_id === channelId);
+				const channel = channels.find((ch) => ch.channel_id === channelId);
 				if (!channel) continue;
 
 				console.log('Closing channel:', channelId);
@@ -136,14 +133,14 @@ export default function CloseChannelsDevPage() {
 					const maxAttempts = 60; // 1分待機
 
 					while (!signed && attempts < maxAttempts) {
-						await new Promise(resolve => setTimeout(resolve, 1000));
+						await new Promise((resolve) => setTimeout(resolve, 1000));
 						attempts++;
 
 						try {
 							const result = await getPayloadResultMutation.mutateAsync({
-								uuid: payloadResponse.uuid
+								uuid: payloadResponse.uuid,
 							});
-							
+
 							if (result.meta?.signed) {
 								signed = true;
 								console.log(`Channel ${channelId} successfully signed`);
@@ -165,7 +162,7 @@ export default function CloseChannelsDevPage() {
 				}
 
 				// 少し待機（レート制限対策）
-				await new Promise(resolve => setTimeout(resolve, 1000));
+				await new Promise((resolve) => setTimeout(resolve, 1000));
 			}
 
 			alert('選択したチャネルのクローズを完了しました');
@@ -185,11 +182,11 @@ export default function CloseChannelsDevPage() {
 			<div className="container mx-auto px-4 py-8">
 				<div className="mx-auto max-w-4xl">
 					<h1 className="mb-8 font-bold text-3xl">Payment Channels一括クローズ（開発用）</h1>
-					
+
 					<div className="mb-6 rounded-lg bg-white/10 p-6">
 						<div className="mb-4">
 							<label className="mb-2 block text-sm">取得モード</label>
-							<div className="flex gap-4 mb-4">
+							<div className="mb-4 flex gap-4">
 								<label className="flex items-center">
 									<input
 										type="radio"
@@ -250,47 +247,47 @@ export default function CloseChannelsDevPage() {
 										type="button"
 										onClick={closeSelectedChannels}
 										disabled={isClosing || selectedChannels.length === 0}
-										className="rounded bg-red-600 px-4 py-2 text-sm font-semibold transition hover:bg-red-700 disabled:opacity-50"
+										className="rounded bg-red-600 px-4 py-2 font-semibold text-sm transition hover:bg-red-700 disabled:opacity-50"
 									>
-										{isClosing ? 'クローズ中...' : `選択したチャネルをクローズ (${selectedChannels.length})`}
+										{isClosing
+											? 'クローズ中...'
+											: `選択したチャネルをクローズ (${selectedChannels.length})`}
 									</button>
 								</div>
 							</div>
 
 							<div className="space-y-2">
 								{channels.map((channel) => (
-									<div 
-										key={channel.channel_id} 
-										className={`rounded-lg p-4 cursor-pointer transition ${
+									<div
+										key={channel.channel_id}
+										className={`cursor-pointer rounded-lg p-4 transition ${
 											selectedChannels.includes(channel.channel_id)
-												? 'bg-blue-900/50 border-2 border-blue-500'
-												: 'bg-white/5 border-2 border-transparent hover:bg-white/10'
+												? 'border-2 border-blue-500 bg-blue-900/50'
+												: 'border-2 border-transparent bg-white/5 hover:bg-white/10'
 										}`}
 										onClick={() => handleToggleChannel(channel.channel_id)}
 									>
 										<div className="flex items-start justify-between">
 											<div className="flex-1">
-												<p className="font-mono text-sm mb-1">
-													Channel ID: {channel.channel_id}
-												</p>
+												<p className="mb-1 font-mono text-sm">Channel ID: {channel.channel_id}</p>
 												{fetchMode === 'source' ? (
 													<p className="text-gray-400 text-sm">
 														Destination: {channel.destination_account}
 													</p>
 												) : (
-													<p className="text-gray-400 text-sm">
-														Source: {channel.account}
-													</p>
+													<p className="text-gray-400 text-sm">Source: {channel.account}</p>
 												)}
 												<p className="text-gray-400 text-sm">
 													Amount: {channel.amount} drops ({Number(channel.amount) / 1_000_000} XRP)
 												</p>
 												<p className="text-gray-400 text-sm">
-													Balance: {channel.balance} drops ({Number(channel.balance) / 1_000_000} XRP)
+													Balance: {channel.balance} drops ({Number(channel.balance) / 1_000_000}{' '}
+													XRP)
 												</p>
 												{channel.expiration && (
-													<p className="text-yellow-400 text-sm">
-														Expiration: {new Date(channel.expiration * 1000 + 946684800000).toLocaleString()}
+													<p className="text-sm text-yellow-400">
+														Expiration:{' '}
+														{new Date(channel.expiration * 1000 + 946684800000).toLocaleString()}
 													</p>
 												)}
 											</div>
@@ -313,22 +310,21 @@ export default function CloseChannelsDevPage() {
 					{channels.length === 0 && address && !isLoading && (
 						<div className="rounded-lg bg-white/10 p-6 text-center">
 							<p className="text-gray-400">
-								{fetchMode === 'source' 
+								{fetchMode === 'source'
 									? 'このアドレスが送信元のPayment Channelがありません'
-									: 'このアドレスが受信先のPayment Channelがありません'
-								}
+									: 'このアドレスが受信先のPayment Channelがありません'}
 							</p>
 						</div>
 					)}
 
 					<div className="mt-8 rounded-lg bg-yellow-900/50 p-4">
-						<p className="text-yellow-300 text-sm">
+						<p className="text-sm text-yellow-300">
 							⚠️ 注意: これは開発用のツールです。本番環境では使用しないでください。
 						</p>
-						<p className="text-yellow-300 text-sm mt-2">
+						<p className="mt-2 text-sm text-yellow-300">
 							- チャネルをクローズすると、残高は送信者に返金されます
 						</p>
-						<p className="text-yellow-300 text-sm">
+						<p className="text-sm text-yellow-300">
 							- 受信者がクローズする場合は、事前にPaymentChannelClaimで残高を請求してください
 						</p>
 					</div>

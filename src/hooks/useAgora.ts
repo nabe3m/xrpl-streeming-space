@@ -1,8 +1,9 @@
 'use client';
 
 import type { IAgoraRTCClient, IAgoraRTCRemoteUser, IMicrophoneAudioTrack } from 'agora-rtc-sdk-ng';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { env } from '~/env';
+import { generateNumericUid } from '~/lib/uid';
 
 interface UseAgoraParams {
 	channelName: string;
@@ -22,9 +23,13 @@ interface UseAgoraReturn {
 	toggleMute: () => Promise<void>;
 	isMuted: boolean;
 	publishAudio: () => Promise<void>;
+	unpublishAudio: () => Promise<void>;
 	connectionState: string;
 	localAudioLevel: number;
 	remoteAudioLevels: Map<string | number, number>;
+	pauseRemoteAudio: () => Promise<void>;
+	resumeRemoteAudio: () => Promise<void>;
+	isRemoteAudioPaused: boolean;
 }
 
 export function useAgora({
@@ -42,7 +47,48 @@ export function useAgora({
 	const [agoraEngine, setAgoraEngine] = useState<any>(null);
 	const [connectionState, setConnectionState] = useState<string>('DISCONNECTED');
 	const [localAudioLevel, setLocalAudioLevel] = useState<number>(0);
-	const [remoteAudioLevels, setRemoteAudioLevels] = useState<Map<string | number, number>>(new Map());
+	const [remoteAudioLevels, setRemoteAudioLevels] = useState<Map<string | number, number>>(
+		new Map(),
+	);
+	const [isRemoteAudioPaused, setIsRemoteAudioPaused] = useState(false);
+	const remoteAudioTracksRef = useRef<Map<string | number, any>>(new Map());
+	const unsubscribedUsersRef = useRef<Set<string | number>>(new Set());
+
+	// user-published イベントハンドラーを別途定義
+	const handleUserPublished = useCallback(async (user: any, mediaType: string) => {
+		console.log('User published:', { uid: user.uid, mediaType });
+		if (mediaType === 'audio' && client) {
+			// 音声停止中のユーザーはサブスクライブしない
+			if (unsubscribedUsersRef.current.has(user.uid)) {
+				console.log('User is in unsubscribed list, skipping subscription:', user.uid);
+				return;
+			}
+			
+			// 音声が一時停止中の場合はサブスクライブしない
+			if (isRemoteAudioPaused) {
+				console.log('Remote audio is paused, skipping subscription:', user.uid);
+				unsubscribedUsersRef.current.add(user.uid);
+				return;
+			}
+			
+			try {
+				await client.subscribe(user, mediaType);
+				console.log('Successfully subscribed to user:', user.uid);
+				const track = user.audioTrack;
+				if (track) {
+					// トラックを保存
+					remoteAudioTracksRef.current.set(user.uid, track);
+					track.play();
+					console.log('Playing audio track for user:', user.uid);
+				} else {
+					console.warn('No audio track found for user:', user.uid);
+				}
+			} catch (error) {
+				console.error('Failed to subscribe to user:', user.uid, error);
+			}
+		}
+		setRemoteUsers((prev) => [...prev.filter((u) => u.uid !== user.uid), user]);
+	}, [client, isRemoteAudioPaused]);
 
 	useEffect(() => {
 		// 動的にAgoraをインポート（クライアントサイドのみ）
@@ -55,33 +101,19 @@ export function useAgora({
 					codec: 'h264', // 変更: より安定したH264コーデックを使用
 				});
 
-				agoraClient.on('user-published', async (user, mediaType) => {
-					console.log('User published:', { uid: user.uid, mediaType });
-					if (mediaType === 'audio') {
-						try {
-							await agoraClient.subscribe(user, mediaType);
-							console.log('Successfully subscribed to user:', user.uid);
-							const track = user.audioTrack;
-							if (track) {
-								track.play();
-								console.log('Playing audio track for user:', user.uid);
-							} else {
-								console.warn('No audio track found for user:', user.uid);
-							}
-						} catch (error) {
-							console.error('Failed to subscribe to user:', user.uid, error);
-						}
-					}
-					setRemoteUsers((prev) => [...prev.filter((u) => u.uid !== user.uid), user]);
-				});
+				// user-published イベントは後で設定
 
 				agoraClient.on('user-unpublished', (user, mediaType) => {
 					if (mediaType === 'audio') {
+						// トラックを削除
+						remoteAudioTracksRef.current.delete(user.uid);
 						setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
 					}
 				});
 
 				agoraClient.on('user-left', (user) => {
+					// トラックを削除
+					remoteAudioTracksRef.current.delete(user.uid);
 					setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
 				});
 
@@ -124,7 +156,7 @@ export function useAgora({
 							setLocalAudioLevel(volume.level);
 						} else {
 							// リモートユーザーの音声レベル
-							setRemoteAudioLevels(prev => {
+							setRemoteAudioLevels((prev) => {
 								const newMap = new Map(prev);
 								newMap.set(volume.uid, volume.level);
 								return newMap;
@@ -144,9 +176,29 @@ export function useAgora({
 		};
 	}, []);
 
+	// clientが設定された後にイベントハンドラーを登録
+	useEffect(() => {
+		if (client) {
+			client.on('user-published', handleUserPublished);
+			
+			return () => {
+				client.off('user-published', handleUserPublished);
+			};
+		}
+	}, [client, handleUserPublished]);
+
 	const join = useCallback(
 		async (tokenOverride?: string): Promise<boolean> => {
 			if (!client || !env.NEXT_PUBLIC_AGORA_APP_ID || !agoraEngine) return false;
+
+			// 既に接続されている場合は何もしない
+			if (isJoined || client.connectionState === 'CONNECTED') {
+				console.log('Already joined or connected, skipping join', {
+					isJoined,
+					connectionState: client.connectionState,
+				});
+				return true;
+			}
 
 			try {
 				const appId = env.NEXT_PUBLIC_AGORA_APP_ID;
@@ -155,12 +207,7 @@ export function useAgora({
 				// Convert string UID to numeric UID (same logic as token generation)
 				let numericUserId: string | number = Math.floor(Math.random() * 1000000);
 				if (uid) {
-					let hash = 0;
-					for (let i = 0; i < uid.length; i++) {
-						hash = (hash << 5) - hash + uid.charCodeAt(i);
-						hash = hash & hash; // Convert to 32bit integer
-					}
-					numericUserId = Math.abs(hash) % 1000000;
+					numericUserId = generateNumericUid(uid);
 				}
 
 				console.log('Joining Agora channel:', {
@@ -179,29 +226,28 @@ export function useAgora({
 
 				// 接続が確立されるまで待つ
 				let retries = 0;
-				while (client.connectionState !== 'CONNECTED' && retries < 20) {
-					console.log(
-						`Waiting for connection... state: ${client.connectionState}, retry: ${retries}`,
-					);
+				while (retries < 20) {
+					const currentState: string = client.connectionState;
+					if (currentState === 'CONNECTED') {
+						setIsJoined(true);
+						console.log('Successfully connected to Agora channel');
+						return true;
+					}
+					console.log(`Waiting for connection... state: ${currentState}, retry: ${retries}`);
 					await new Promise((resolve) => setTimeout(resolve, 500));
 					retries++;
 				}
 
-				if (client.connectionState === 'CONNECTED') {
-					setIsJoined(true);
-					console.log('Successfully connected to Agora channel');
-					return true;
-				} else {
-					console.error('Failed to establish connection after retries');
-					await client.leave();
-					return false;
-				}
+				// タイムアウト
+				console.error('Failed to establish connection after retries');
+				await client.leave();
+				return false;
 			} catch (error) {
 				console.error('Failed to join channel:', error);
 				throw error;
 			}
 		},
-		[client, channelName, uid, defaultToken, isHost, agoraEngine],
+		[client, channelName, uid, defaultToken, isHost, agoraEngine, isJoined],
 	);
 
 	const leave = useCallback(async () => {
@@ -235,7 +281,10 @@ export function useAgora({
 			// チャンネルから退出
 			if (isJoined) {
 				// 既に切断されていない場合のみleave
-				if (client.connectionState !== 'DISCONNECTED' && client.connectionState !== 'DISCONNECTING') {
+				if (
+					client.connectionState !== 'DISCONNECTED' &&
+					client.connectionState !== 'DISCONNECTING'
+				) {
 					try {
 						await client.leave();
 					} catch (leaveError) {
@@ -343,6 +392,142 @@ export function useAgora({
 		setIsMuted(newMutedState);
 	}, [localAudioTrack, isMuted]);
 
+	const unpublishAudio = useCallback(async () => {
+		if (!client) {
+			console.log('No client available');
+			return;
+		}
+
+		try {
+			console.log('Unpublishing audio...', {
+				isPublished,
+				hasLocalTrack: !!localAudioTrack,
+				connectionState: client.connectionState
+			});
+
+			// まずクライアントからアンパブリッシュ（先に実行）
+			if (client.connectionState === 'CONNECTED' && isPublished) {
+				try {
+					await client.unpublish();
+					console.log('Successfully unpublished from client');
+				} catch (unpublishError) {
+					console.error('Error unpublishing:', unpublishError);
+				}
+			}
+
+			// 音声トラックを停止・削除
+			if (localAudioTrack) {
+				try {
+					localAudioTrack.stop();
+					localAudioTrack.close();
+					console.log('Audio track stopped and closed');
+				} catch (closeError) {
+					console.error('Error closing audio track:', closeError);
+				}
+				setLocalAudioTrack(null);
+			}
+
+			// 音声レベル監視を無効化（イベントリスナーを削除）
+			try {
+				client.removeAllListeners('volume-indicator');
+				console.log('Audio volume indicator listener removed');
+			} catch (volumeError) {
+				console.error('Error removing volume indicator listener:', volumeError);
+			}
+
+			// 状態をリセット
+			setIsPublished(false);
+			setIsMuted(false);
+			setLocalAudioLevel(0); // 音声レベルもリセット
+
+			console.log('Audio unpublished successfully');
+		} catch (error) {
+			console.error('Failed to unpublish audio:', error);
+			// エラーが発生しても状態はリセット
+			setIsPublished(false);
+			setIsMuted(false);
+			setLocalAudioLevel(0);
+		}
+	}, [client, isPublished, localAudioTrack]);
+
+	// リモート音声を完全に停止（アンサブスクライブ）
+	const pauseRemoteAudio = useCallback(async () => {
+		if (!client) {
+			console.log('Client not ready');
+			return;
+		}
+
+		console.log('Stopping all remote audio tracks...', {
+			remoteUsersCount: remoteUsers.length,
+			tracksCount: remoteAudioTracksRef.current.size,
+		});
+		
+		// まず既存のトラックをすべて停止
+		remoteAudioTracksRef.current.forEach((track, uid) => {
+			try {
+				track.stop();
+				console.log(`Stopped audio track for user: ${uid}`);
+			} catch (error) {
+				console.error(`Failed to stop track for user ${uid}:`, error);
+			}
+		});
+		
+		// すべてのリモートユーザーからアンサブスクライブ
+		for (const user of remoteUsers) {
+			try {
+				// ユーザーからアンサブスクライブ
+				await client.unsubscribe(user, 'audio');
+				console.log(`Unsubscribed from user: ${user.uid}`);
+				
+				// アンサブスクライブしたユーザーを記録
+				unsubscribedUsersRef.current.add(user.uid);
+			} catch (error) {
+				console.error(`Failed to unsubscribe from user ${user.uid}:`, error);
+			}
+		}
+		
+		// トラックマップをクリア
+		remoteAudioTracksRef.current.clear();
+		
+		setIsRemoteAudioPaused(true);
+		console.log('All remote audio tracks stopped and unsubscribed');
+	}, [client, remoteUsers]);
+
+	// リモート音声を再開（再サブスクライブ）
+	const resumeRemoteAudio = useCallback(async () => {
+		if (!client || !isRemoteAudioPaused) {
+			console.log('Client not ready or remote audio not paused');
+			return;
+		}
+
+		console.log('Re-subscribing to all remote audio tracks...');
+		
+		// アンサブスクライブリストをクリア
+		unsubscribedUsersRef.current.clear();
+		
+		// すべてのリモートユーザーに再サブスクライブ
+		for (const user of remoteUsers) {
+			if (user.hasAudio) {
+				try {
+					await client.subscribe(user, 'audio');
+					console.log(`Re-subscribed to user: ${user.uid}`);
+					
+					const track = user.audioTrack;
+					if (track) {
+						remoteAudioTracksRef.current.set(user.uid, track);
+						track.play();
+						console.log(`Resumed audio track for user: ${user.uid}`);
+					}
+				} catch (error) {
+					console.error(`Failed to re-subscribe to user ${user.uid}:`, error);
+				}
+			}
+		}
+		
+		setIsRemoteAudioPaused(false);
+		console.log('All remote audio tracks resumed');
+	}, [client, isRemoteAudioPaused, remoteUsers]);
+
 	useEffect(() => {
 		return () => {
 			// コンポーネントのアンマウント時のクリーンアップ
@@ -373,8 +558,12 @@ export function useAgora({
 		toggleMute,
 		isMuted,
 		publishAudio,
+		unpublishAudio,
 		connectionState,
 		localAudioLevel,
 		remoteAudioLevels,
+		pauseRemoteAudio,
+		resumeRemoteAudio,
+		isRemoteAudioPaused,
 	};
 }

@@ -66,11 +66,7 @@ export async function signOffLedgerPayment(
 	const roundedAmountXRP = Math.round(amountXRP * 1000000) / 1000000;
 	const amountDrops = xrpToDrops(roundedAmountXRP);
 
-	const signature = signPaymentChannelClaim(
-		channelId,
-		amountDrops,
-		signatureWallet.privateKey,
-	);
+	const signature = signPaymentChannelClaim(channelId, amountDrops, signatureWallet.privateKey);
 
 	console.log('🚀 signature', signature);
 
@@ -132,11 +128,11 @@ export async function getAccountChannels(accountAddress: string, destinationAddr
 
 export async function getPaymentChannelsBetweenAddresses(
 	senderAddress: string,
-	receiverAddress: string
+	receiverAddress: string,
 ) {
 	console.log('🚀 getPaymentChannelsBetweenAddresses called:', {
 		senderAddress,
-		receiverAddress
+		receiverAddress,
 	});
 
 	const client = await getXRPLClient();
@@ -167,11 +163,11 @@ export async function getPaymentChannelsBetweenAddresses(
 		const allObjects = (response.result as any).account_objects || [];
 
 		console.log('🚀 Total account objects:', allObjects.length);
-		
+
 		// デバッグ用：全オブジェクトのタイプを表示
 		const objectTypes = allObjects.map((obj: any) => obj.LedgerEntryType);
 		console.log('🚀 Object types found:', [...new Set(objectTypes)]);
-		
+
 		// PayChannelオブジェクトのみを表示
 		const payChannels = allObjects.filter((obj: any) => obj.LedgerEntryType === 'PayChannel');
 		console.log('🚀 PayChannel objects found:', payChannels.length);
@@ -185,30 +181,29 @@ export async function getPaymentChannelsBetweenAddresses(
 				index: ch.index,
 			});
 		});
-	
-	// 送信先が指定されたアドレスのペイメントチャネルをフィルタリング
-	const channels = allObjects.filter((obj: any) => 
-		obj.LedgerEntryType === 'PayChannel' && 
-		obj.Destination === receiverAddress
-	);
-	
-	console.log('🚀 Filtered channels for receiver:', channels.length);
 
-	// account_channelsと同じ形式に変換
-	return channels.map((ch: any) => ({
-		channel_id: ch.index || ch.ChannelID,
-		destination_account: ch.Destination,
-		amount: ch.Amount,
-		balance: ch.Balance || '0',
-		public_key: ch.PublicKey,
-		source_tag: ch.SourceTag,
-		destination_tag: ch.DestinationTag,
-		expiration: ch.Expiration,
-		cancel_after: ch.CancelAfter,
-		settle_delay: ch.SettleDelay,
-		// チャネルが存在すればOPENとみなす（CLOSEDチャネルはaccount_objectsには含まれない）
-		status: 'OPEN',
-	}));
+		// 送信先が指定されたアドレスのペイメントチャネルをフィルタリング
+		const channels = allObjects.filter(
+			(obj: any) => obj.LedgerEntryType === 'PayChannel' && obj.Destination === receiverAddress,
+		);
+
+		console.log('🚀 Filtered channels for receiver:', channels.length);
+
+		// account_channelsと同じ形式に変換
+		return channels.map((ch: any) => ({
+			channel_id: ch.index || ch.ChannelID,
+			destination_account: ch.Destination,
+			amount: ch.Amount,
+			balance: ch.Balance || '0',
+			public_key: ch.PublicKey,
+			source_tag: ch.SourceTag,
+			destination_tag: ch.DestinationTag,
+			expiration: ch.Expiration,
+			cancel_after: ch.CancelAfter,
+			settle_delay: ch.SettleDelay,
+			// チャネルが存在すればOPENとみなす（CLOSEDチャネルはaccount_objectsには含まれない）
+			status: 'OPEN',
+		}));
 	} catch (error) {
 		console.error('Error in getPaymentChannelsBetweenAddresses:', error);
 		throw error;

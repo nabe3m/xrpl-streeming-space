@@ -508,6 +508,55 @@ export const roomRouter = createTRPCRouter({
 				});
 			}
 
+					const updated = await ctx.db.roomParticipant.update({
+			where: { id: participant.id },
+			data: {
+				canSpeak: false,
+				speakRequestedAt: null, // リクエスト状態もリセット
+			},
+		});
+
+		return updated;
+		}),
+
+	releaseSpeakPermission: protectedProcedure
+		.input(
+			z.object({
+				roomId: z.string(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			// 自分の参加情報を取得
+			const participant = await ctx.db.roomParticipant.findUnique({
+				where: {
+					roomId_userId: {
+						roomId: input.roomId,
+						userId: ctx.session.userId,
+					},
+				},
+			});
+
+			if (!participant) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Participant not found',
+				});
+			}
+
+			// ホストは権限を放棄できない
+			if (participant.role === 'HOST') {
+				throw new TRPCError({
+					code: 'BAD_REQUEST',
+					message: 'Host cannot release speak permission',
+				});
+			}
+
+			// スピーカー権限を持っていない場合は何もしない
+			if (!participant.canSpeak) {
+				return participant;
+			}
+
+			// スピーカー権限を放棄
 			const updated = await ctx.db.roomParticipant.update({
 				where: { id: participant.id },
 				data: {
@@ -515,6 +564,7 @@ export const roomRouter = createTRPCRouter({
 				},
 			});
 
+			console.log('Speaker permission released for user:', ctx.session.userId);
 			return updated;
 		}),
 });

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 import { db } from '~/server/db';
 
 export async function POST(request: NextRequest) {
@@ -7,10 +7,7 @@ export async function POST(request: NextRequest) {
 		const { roomId, userId } = body;
 
 		if (!roomId || !userId) {
-			return NextResponse.json(
-				{ error: 'Missing required fields' },
-				{ status: 400 }
-			);
+			return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
 		}
 
 		// 参加者を検索
@@ -24,10 +21,7 @@ export async function POST(request: NextRequest) {
 		});
 
 		if (!participant) {
-			return NextResponse.json(
-				{ error: 'Participant not found' },
-				{ status: 404 }
-			);
+			return NextResponse.json({ error: 'Participant not found' }, { status: 404 });
 		}
 
 		// 退室処理
@@ -45,9 +39,6 @@ export async function POST(request: NextRequest) {
 		return NextResponse.json({ success: true });
 	} catch (error) {
 		console.error('Error in leave room API:', error);
-		return NextResponse.json(
-			{ error: 'Internal server error' },
-			{ status: 500 }
-		);
+		return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
 	}
 }

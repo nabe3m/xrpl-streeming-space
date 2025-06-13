@@ -48,7 +48,7 @@ export default function TestXummPage() {
 			<div className="container mx-auto px-4 py-8">
 				<div className="mx-auto max-w-4xl">
 					<h1 className="mb-8 font-bold text-3xl">Xumm Test</h1>
-					
+
 					<div className="mb-6 rounded-lg bg-white/10 p-6">
 						<button
 							type="button"
@@ -62,9 +62,7 @@ export default function TestXummPage() {
 
 					{result && (
 						<div className="rounded-lg bg-white/10 p-6">
-							<pre className="text-xs overflow-auto">
-								{JSON.stringify(result, null, 2)}
-							</pre>
+							<pre className="overflow-auto text-xs">{JSON.stringify(result, null, 2)}</pre>
 						</div>
 					)}
 				</div>

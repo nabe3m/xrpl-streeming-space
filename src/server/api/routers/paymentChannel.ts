@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
-import { z } from 'zod';
 import { dropsToXrp, xrpToDrops } from 'xrpl';
+import { z } from 'zod';
 import {
 	createPaymentChannelClaimTransaction,
 	createPaymentChannelTransaction,
@@ -49,12 +49,12 @@ export const paymentChannelRouter = createTRPCRouter({
 				console.log('🚀 createForRoom - Checking existing channels...');
 				console.log('🚀 Sender:', user.walletAddress);
 				console.log('🚀 Receiver:', room.creator.walletAddress);
-				
+
 				const channels = await getPaymentChannelsBetweenAddresses(
 					user.walletAddress,
-					room.creator.walletAddress
+					room.creator.walletAddress,
 				);
-				
+
 				console.log('🚀 createForRoom - Found channels:', channels.length);
 				console.log('🚀 createForRoom - Channels:', JSON.stringify(channels, null, 2));
 
@@ -64,7 +64,7 @@ export const paymentChannelRouter = createTRPCRouter({
 						channel_id: ch.channel_id,
 						balance: ch.balance,
 						amount: ch.amount,
-						isActive: ch.balance !== '0' && ch.amount !== '0'
+						isActive: ch.balance !== '0' && ch.amount !== '0',
 					});
 					return ch.balance !== '0' && ch.amount !== '0';
 				});
@@ -169,7 +169,7 @@ export const paymentChannelRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			console.log('signPayment input:', input);
-			
+
 			const channel = await ctx.db.paymentChannel.findUnique({
 				where: { channelId: input.channelId },
 			});
@@ -194,12 +194,12 @@ export const paymentChannelRouter = createTRPCRouter({
 				if (channel.lastAmount) {
 					// Convert drops to XRP for comparison
 					const lastAmountXRP = Number(dropsToXrp(channel.lastAmount));
-					
+
 					// Ensure the new amount is greater than the last signed amount
 					if (input.amountXRP <= lastAmountXRP) {
 						console.error('New amount must be greater than last signed amount:', {
 							newAmount: input.amountXRP,
-							lastAmount: lastAmountXRP
+							lastAmount: lastAmountXRP,
 						});
 						throw new TRPCError({
 							code: 'BAD_REQUEST',
@@ -340,13 +340,16 @@ export const paymentChannelRouter = createTRPCRouter({
 				console.log('🚀 Fetching channels from XRPL...');
 				console.log('🚀 Sender (user):', user.walletAddress);
 				console.log('🚀 Receiver (host):', room.creator.walletAddress);
-				
+
 				const channels = await getPaymentChannelsBetweenAddresses(
 					user.walletAddress,
-					room.creator.walletAddress
+					room.creator.walletAddress,
 				);
 
-				console.log('🚀 getMyChannelForRoom - channels from XRPL:', JSON.stringify(channels, null, 2));
+				console.log(
+					'🚀 getMyChannelForRoom - channels from XRPL:',
+					JSON.stringify(channels, null, 2),
+				);
 				console.log('🚀 getMyChannelForRoom - channels count:', channels.length);
 
 				const activeChannel = channels.find((ch: any) => {
@@ -358,11 +361,17 @@ export const paymentChannelRouter = createTRPCRouter({
 						destination_account: ch.destination_account,
 					});
 					// デバッグ：各チャネルの宛先を確認
-					console.log('Channel destination matches?', ch.destination_account === room.creator.walletAddress);
+					console.log(
+						'Channel destination matches?',
+						ch.destination_account === room.creator.walletAddress,
+					);
 					return ch.status !== 'CLOSED';
 				});
 
-				console.log('🚀 getMyChannelForRoom - activeChannel:', activeChannel ? JSON.stringify(activeChannel, null, 2) : 'null');
+				console.log(
+					'🚀 getMyChannelForRoom - activeChannel:',
+					activeChannel ? JSON.stringify(activeChannel, null, 2) : 'null',
+				);
 
 				if (activeChannel) {
 					// データベースのチャネル情報を更新または作成
@@ -389,20 +398,16 @@ export const paymentChannelRouter = createTRPCRouter({
 					const depositAmount = BigInt(activeChannel.amount);
 					const usedAmount = BigInt(dbChannel.lastAmount || '0');
 					const remainingAmount = depositAmount - usedAmount;
-					
+
 					console.log('🚀 Channel balance check:', {
 						deposit: depositAmount.toString(),
 						used: usedAmount.toString(),
 						remaining: remainingAmount.toString(),
-						hasBalance: remainingAmount > 0n
+						hasBalance: remainingAmount > 0n,
 					});
 
-					// 残高がない場合はnullを返す（チャネルが使い切られている）
-					if (remainingAmount <= 0n) {
-						console.log('🚀 Channel has no remaining balance');
-						return null;
-					}
-
+					// チャネルが存在する場合は、残高がゼロでも返す
+					// UIで適切にデポジット追加を促すため
 					return dbChannel;
 				}
 			} catch (error) {
