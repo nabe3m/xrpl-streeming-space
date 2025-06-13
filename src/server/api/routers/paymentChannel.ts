@@ -70,6 +70,9 @@ export const paymentChannelRouter = createTRPCRouter({
 				});
 
 				if (activeChannel) {
+					// 署名ウォレットの公開鍵を取得（16進数形式）
+					const signatureWallet = await getSignatureWallet();
+					
 					// データベースのチャネル情報を更新または作成
 					const dbChannel = await ctx.db.paymentChannel.upsert({
 						where: {
@@ -86,7 +89,7 @@ export const paymentChannelRouter = createTRPCRouter({
 							senderId: ctx.session.userId,
 							receiverId: room.creatorId,
 							amount: activeChannel.amount,
-							publicKey: activeChannel.public_key || '',
+							publicKey: signatureWallet.publicKey, // 16進数形式の公開鍵を使用
 							status: 'OPEN',
 						},
 					});
@@ -98,10 +101,11 @@ export const paymentChannelRouter = createTRPCRouter({
 			}
 
 			// XRPLにチャネルがない場合は、データベースも確認
+			// ユーザー間の1:1関係でチャネルを検索（roomIdに依存しない）
 			const existingDbChannel = await ctx.db.paymentChannel.findFirst({
 				where: {
-					roomId: input.roomId,
 					senderId: ctx.session.userId,
+					receiverId: room.creatorId,
 					status: 'OPEN',
 				},
 			});
@@ -131,7 +135,7 @@ export const paymentChannelRouter = createTRPCRouter({
 				roomId: z.string(),
 				channelId: z.string(),
 				amount: z.string(),
-				publicKey: z.string(),
+				publicKey: z.string(), // フロントエンドからは受け取るが使用しない
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
@@ -146,6 +150,11 @@ export const paymentChannelRouter = createTRPCRouter({
 				});
 			}
 
+			console.log('🚀 confirmCreation - input:', input);
+
+			// 署名ウォレットの公開鍵を取得（16進数形式）
+			const signatureWallet = await getSignatureWallet();
+
 			const channel = await ctx.db.paymentChannel.create({
 				data: {
 					channelId: input.channelId,
@@ -153,7 +162,7 @@ export const paymentChannelRouter = createTRPCRouter({
 					senderId: ctx.session.userId,
 					receiverId: room.creatorId,
 					amount: input.amount,
-					publicKey: input.publicKey,
+					publicKey: signatureWallet.publicKey, // 16進数形式の公開鍵を使用
 				},
 			});
 
@@ -190,6 +199,22 @@ export const paymentChannelRouter = createTRPCRouter({
 			}
 
 			try {
+				// Check channel balance first
+				const depositAmount = BigInt(channel.amount);
+				const requestedAmount = BigInt(xrpToDrops(input.amountXRP));
+				
+				// Check if requested amount exceeds deposit
+				if (requestedAmount > depositAmount) {
+					console.error('Requested amount exceeds channel deposit:', {
+						requestedXRP: input.amountXRP,
+						depositXRP: Number(dropsToXrp(channel.amount)),
+					});
+					throw new TRPCError({
+						code: 'BAD_REQUEST',
+						message: `残高不足: チャネルのデポジット額 (${Number(dropsToXrp(channel.amount))} XRP) を超える金額をリクエストしています`,
+					});
+				}
+
 				// Check if there's a previous signed amount
 				if (channel.lastAmount) {
 					// Convert drops to XRP for comparison
@@ -201,19 +226,34 @@ export const paymentChannelRouter = createTRPCRouter({
 							newAmount: input.amountXRP,
 							lastAmount: lastAmountXRP,
 						});
-						throw new TRPCError({
-							code: 'BAD_REQUEST',
-							message: `Amount must be greater than last signed amount (${lastAmountXRP} XRP)`,
-						});
+						
+						// Calculate remaining balance
+						const remainingBalance = depositAmount - BigInt(channel.lastAmount);
+						const remainingXRP = Number(dropsToXrp(remainingBalance.toString()));
+						
+						// If there's no remaining balance, provide a more helpful error message
+						if (remainingBalance <= 0n) {
+							throw new TRPCError({
+								code: 'BAD_REQUEST',
+								message: `残高不足: チャネルの残高が0です。デポジットを追加してください。`,
+							});
+						} else {
+							throw new TRPCError({
+								code: 'BAD_REQUEST',
+								message: `Amount must be greater than last signed amount (${lastAmountXRP} XRP). 残り残高: ${remainingXRP} XRP`,
+							});
+						}
 					}
 				}
 
 				const payment = await signOffLedgerPayment(input.channelId, input.amountXRP);
 
+				console.log('🚀 🚀 🚀 🚀 🚀 payment', payment.amount);
+
 				const signatureWallet = await getSignatureWallet();
 
 				const isValid = await verifyOffLedgerPayment(
-					input.channelId,
+					payment.channelId, // Use the normalized channel ID from payment
 					input.amountXRP,
 					payment.signature,
 					signatureWallet.publicKey,
@@ -290,17 +330,49 @@ export const paymentChannelRouter = createTRPCRouter({
 			}),
 		)
 		.query(async ({ ctx, input }) => {
+			// ルーム情報を取得してホストを確認
+			const room = await ctx.db.room.findUnique({
+				where: { id: input.roomId },
+			});
+
+			if (!room || room.creatorId !== ctx.session.userId) {
+				// ホストでない場合は空配列を返す
+				return [];
+			}
+
+			// ホストに対するすべてのアクティブなチャネルを取得（ルームに関係なく）
 			const channels = await ctx.db.paymentChannel.findMany({
 				where: {
-					roomId: input.roomId,
 					receiverId: ctx.session.userId,
+					status: 'OPEN',
 				},
 				include: {
 					sender: true,
 				},
 			});
 
-			return channels;
+			// 現在のルームの参加者のチャネルのみフィルタリング
+			const participants = await ctx.db.roomParticipant.findMany({
+				where: {
+					roomId: input.roomId,
+					leftAt: null,
+				},
+				select: {
+					userId: true,
+				},
+			});
+
+			const participantIds = participants.map(p => p.userId);
+			const relevantChannels = channels.filter(ch => participantIds.includes(ch.senderId));
+
+			console.log('🚀 getChannelsForRoom:', {
+				hostId: ctx.session.userId,
+				totalChannels: channels.length,
+				relevantChannels: relevantChannels.length,
+				participantIds,
+			});
+
+			return relevantChannels;
 		}),
 
 	getMyChannelForRoom: protectedProcedure
@@ -374,6 +446,9 @@ export const paymentChannelRouter = createTRPCRouter({
 				);
 
 				if (activeChannel) {
+					// 署名ウォレットの公開鍵を取得（16進数形式）
+					const signatureWallet = await getSignatureWallet();
+					
 					// データベースのチャネル情報を更新または作成
 					const dbChannel = await ctx.db.paymentChannel.upsert({
 						where: {
@@ -382,6 +457,7 @@ export const paymentChannelRouter = createTRPCRouter({
 						update: {
 							amount: activeChannel.amount,
 							status: 'OPEN',
+							publicKey: signatureWallet.publicKey, // 常に正しい16進数形式を使用
 						},
 						create: {
 							channelId: activeChannel.channel_id,
@@ -389,7 +465,7 @@ export const paymentChannelRouter = createTRPCRouter({
 							senderId: ctx.session.userId,
 							receiverId: room.creatorId,
 							amount: activeChannel.amount,
-							publicKey: activeChannel.public_key || '',
+							publicKey: signatureWallet.publicKey, // 16進数形式の公開鍵を使用
 							status: 'OPEN',
 						},
 					});
@@ -415,10 +491,11 @@ export const paymentChannelRouter = createTRPCRouter({
 			}
 
 			// XRPLにチャネルがない場合は、データベースからも確認
+			// ユーザー間の1:1関係でチャネルを検索（roomIdに依存しない）
 			const dbChannel = await ctx.db.paymentChannel.findFirst({
 				where: {
-					roomId: input.roomId,
 					senderId: ctx.session.userId,
+					receiverId: room.creatorId,
 					status: 'OPEN',
 				},
 			});
@@ -461,22 +538,68 @@ export const paymentChannelRouter = createTRPCRouter({
 				});
 			}
 
-			const transaction = await createPaymentChannelClaimTransaction({
-				channelId: channel.channelId,
-				balance: channel.lastAmount,
-				amount: channel.lastAmount,
-				signature: channel.lastSignature,
-				publicKey: channel.publicKey,
-			});
+			try {
+				// Log the exact values being used for the claim
+				console.log('🔍 Claim parameters:', {
+					channelId: channel.channelId,
+					lastAmount: channel.lastAmount,
+					lastSignature: channel.lastSignature?.substring(0, 20) + '...',
+					publicKeyFromDB: channel.publicKey,
+					receiverAddress: channel.receiver.walletAddress,
+				});
+				
+				// Get signature wallet to compare public keys
+				const signatureWallet = await getSignatureWallet();
+				console.log('🔍 Signature wallet comparison:', {
+					dbPublicKey: channel.publicKey,
+					walletPublicKey: signatureWallet.publicKey,
+					match: channel.publicKey.toUpperCase() === signatureWallet.publicKey.toUpperCase(),
+				});
+				
+				const transaction = await createPaymentChannelClaimTransaction({
+					channelId: channel.channelId,
+					balance: channel.lastAmount,
+					amount: channel.lastAmount,
+					signature: channel.lastSignature,
+					publicKey: channel.publicKey,
+					accountAddress: channel.receiver.walletAddress,
+				});
 
-			const transactionWithAccount = {
-				...transaction,
-				Account: channel.receiver.walletAddress,
-			};
+				console.log('Created claim transaction:', JSON.stringify(transaction, null, 2));
+				
+				// Validate transaction before sending to Xumm
+				if (!transaction.Account || !transaction.Channel || !transaction.Amount) {
+					throw new Error(`Invalid transaction: missing required fields - Account: ${transaction.Account}, Channel: ${transaction.Channel}, Amount: ${transaction.Amount}`);
+				}
 
-			const payload = await createTransactionPayload(transactionWithAccount);
-
-			return { payload };
+				try {
+					const payload = await createTransactionPayload(transaction);
+					console.log('Created Xumm payload:', JSON.stringify(payload, null, 2));
+					return { payload };
+				} catch (xummError) {
+					console.error('Xumm API error details:', {
+						error: xummError,
+						message: xummError instanceof Error ? xummError.message : 'Unknown error',
+						stack: xummError instanceof Error ? xummError.stack : undefined,
+					});
+					
+					// Check if it's an API key issue
+					if (xummError instanceof Error && xummError.message.includes('not configured')) {
+						throw new TRPCError({
+							code: 'INTERNAL_SERVER_ERROR',
+							message: 'Xumm API認証情報が設定されていません。環境変数XUMM_API_KEYとXUMM_API_SECRETを確認してください。',
+						});
+					}
+					
+					throw xummError;
+				}
+			} catch (error) {
+				console.error('Error creating claim payload:', error);
+				throw new TRPCError({
+					code: 'INTERNAL_SERVER_ERROR',
+					message: `Failed to create claim payload: ${error instanceof Error ? error.message : 'Unknown error'}`,
+				});
+			}
 		}),
 
 	closeChannel: protectedProcedure
@@ -599,9 +722,9 @@ export const paymentChannelRouter = createTRPCRouter({
 				});
 			}
 
+			// ホストに対するすべてのアクティブなチャネルを取得（roomIdに依存しない）
 			const channels = await ctx.db.paymentChannel.findMany({
 				where: {
-					roomId: input.roomId,
 					receiverId: ctx.session.userId,
 					status: 'OPEN',
 				},
@@ -611,26 +734,29 @@ export const paymentChannelRouter = createTRPCRouter({
 
 			for (const channel of channels) {
 				if (channel.lastSignature && channel.lastAmount) {
-					const transaction = await createPaymentChannelClaimTransaction({
-						channelId: channel.channelId,
-						balance: channel.lastAmount,
-						amount: channel.lastAmount,
-						signature: channel.lastSignature,
-						publicKey: channel.publicKey,
-					});
-
 					const user = await ctx.db.user.findUnique({
 						where: { id: ctx.session.userId },
 					});
 
 					if (user) {
-						const transactionWithAccount = {
+						const transaction = await createPaymentChannelClaimTransaction({
+							channelId: channel.channelId,
+							balance: channel.lastAmount,
+							amount: channel.lastAmount,
+							signature: channel.lastSignature,
+							publicKey: channel.publicKey,
+							accountAddress: user.walletAddress,
+						});
+
+						// Closeフラグを追加してチャネルを閉じる
+						const transactionWithClose = {
 							...transaction,
-							Account: user.walletAddress,
 							Close: true,
 						};
 
-						const payload = await createTransactionPayload(transactionWithAccount);
+						console.log('Transaction with close flag:', JSON.stringify(transactionWithClose, null, 2));
+
+						const payload = await createTransactionPayload(transactionWithClose);
 
 						results.push({
 							channelId: channel.channelId,
@@ -642,4 +768,24 @@ export const paymentChannelRouter = createTRPCRouter({
 
 			return { results };
 		}),
+
+	getAllReceivedChannels: protectedProcedure.query(async ({ ctx }) => {
+		// Get all channels where the current user is the receiver
+		const channels = await ctx.db.paymentChannel.findMany({
+			where: {
+				receiverId: ctx.session.userId,
+				status: 'OPEN',
+			},
+			include: {
+				sender: true,
+				room: true,
+			},
+			orderBy: [
+				{ lastAmount: 'desc' },
+				{ createdAt: 'desc' },
+			],
+		});
+
+		return channels;
+	}),
 });

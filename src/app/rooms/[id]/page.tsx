@@ -73,7 +73,7 @@ export default function RoomPage() {
 	const [agoraToken, setAgoraToken] = useState<string | null>(null);
 
 	// Check if host is in the room (for non-host users) - will be defined after useAgora hook
-	const [hostInRoomState, setHostInRoomState] = useState(true);
+	const [hostInRoomState, setHostInRoomState] = useState<boolean>(true);
 
 	// Payment channel hook
 	const {
@@ -314,6 +314,9 @@ export default function RoomPage() {
 			await leave();
 			console.log('✅ Left Agora channel');
 
+			// Agoraが完全にクリーンアップされるのを待つ
+			await new Promise((resolve) => setTimeout(resolve, 500));
+
 			console.log('🚀 Leaving room on server...');
 			// サーバー側の処理
 			leaveRoom({ roomId });
@@ -460,9 +463,11 @@ export default function RoomPage() {
 				if (!myChannel) {
 					// ペイメントチャネルがない場合は作成を要求
 					console.log('Payment channel required but not found');
+					console.log('Current isCreatingChannel:', isCreatingChannel);
 					setIsJoining(false);
 					// チャネル作成画面を表示
 					handlePaymentChannelCreation();
+					console.log('Called handlePaymentChannelCreation');
 					return; // ルームには参加しない
 				}
 				// 既存のチャネルがある場合はそれを使用
@@ -585,36 +590,77 @@ export default function RoomPage() {
 						const previousAmount = myChannel ? BigInt(myChannel.amount) : 0n;
 						console.log('💰 Previous channel amount:', dropsToXrp(previousAmount.toString()), 'XRP');
 
-						// Wait for XRPL to process the transaction (4-6 seconds for ledger close)
+						// Wait for XRPL to process the transaction with retry logic
 						console.log('⏳ Waiting for XRPL to process transaction...');
-						await new Promise((resolve) => setTimeout(resolve, 6000));
+						
+						let verificationAttempts = 0;
+						const maxVerificationAttempts = 3;
+						let depositVerified = false;
+						let channelResult = null;
+						let roomResult = null;
+						
+						while (verificationAttempts < maxVerificationAttempts && !depositVerified) {
+							verificationAttempts++;
+							
+							// Wait longer on first attempt, shorter on retries
+							const waitTime = verificationAttempts === 1 ? 8000 : 3000;
+							console.log(`⏳ Attempt ${verificationAttempts}/${maxVerificationAttempts}: Waiting ${waitTime}ms for XRPL...`);
+							await new Promise((resolve) => setTimeout(resolve, waitTime));
 
-						// Refetch channel information to verify deposit was added
-						console.log('🔄 Verifying deposit was added...');
-						const [channelResult, roomResult] = await Promise.all([
-							refetchMyChannel(),
-							refetchRoom(),
-						]);
+							// Refetch channel information to verify deposit was added
+							console.log(`🔄 Attempt ${verificationAttempts}: Verifying deposit was added...`);
+							[channelResult, roomResult] = await Promise.all([
+								refetchMyChannel(),
+								refetchRoom(),
+							]);
 
-						// Verify the deposit was actually added
-						if (!channelResult.data) {
-							console.error('❌ Could not fetch updated channel data');
-							throw new Error('Failed to verify deposit was added');
+							// Verify the deposit was actually added
+							if (!channelResult.data) {
+								console.error(`❌ Attempt ${verificationAttempts}: Could not fetch updated channel data`);
+								if (verificationAttempts === maxVerificationAttempts) {
+									throw new Error('Failed to verify deposit was added after multiple attempts');
+								}
+								continue;
+							}
+
+							const newAmount = BigInt(channelResult.data.amount);
+							const actualAddedAmount = newAmount - previousAmount;
+							const expectedAddedAmount = BigInt(xrpToDrops(depositAmountXRP));
+
+							console.log(`💰 Attempt ${verificationAttempts}: New channel amount:`, dropsToXrp(newAmount.toString()), 'XRP');
+							console.log(`💸 Attempt ${verificationAttempts}: Actually added:`, dropsToXrp(actualAddedAmount.toString()), 'XRP');
+							console.log(`💸 Attempt ${verificationAttempts}: Expected to add:`, dropsToXrp(expectedAddedAmount.toString()), 'XRP');
+
+							// Check if amount increased
+							if (actualAddedAmount > 0n) {
+								depositVerified = true;
+								console.log(`✅ Attempt ${verificationAttempts}: Deposit verified successfully!`);
+							} else {
+								console.warn(`⚠️ Attempt ${verificationAttempts}: Channel amount not yet updated on XRPL`);
+								if (verificationAttempts === maxVerificationAttempts) {
+									console.error('❌ Channel amount did not increase after all attempts');
+									// Log additional debugging info
+									console.error('Debug info:', {
+										previousAmount: dropsToXrp(previousAmount.toString()),
+										newAmount: dropsToXrp(newAmount.toString()),
+										channelId: myChannel?.channelId,
+										transactionId: payloadResult.response.txid,
+									});
+									const explorerUrl = `${env.NEXT_PUBLIC_XRPL_NETWORK.includes('testnet') ? 'https://testnet.xrpl.org' : 'https://livenet.xrpl.org'}/transactions/${payloadResult.response.txid}`;
+									console.error('🔗 Transaction explorer URL:', explorerUrl);
+									throw new Error(`Deposit transaction may have failed - channel amount did not increase. Please check the transaction on XRPL explorer: ${explorerUrl}`);
+								}
+							}
 						}
-
+						
+						if (!depositVerified || !channelResult?.data) {
+							throw new Error('Failed to verify deposit after all attempts');
+						}
+						
+						// Continue with verified data
 						const newAmount = BigInt(channelResult.data.amount);
 						const actualAddedAmount = newAmount - previousAmount;
 						const expectedAddedAmount = BigInt(xrpToDrops(depositAmountXRP));
-
-						console.log('💰 New channel amount:', dropsToXrp(newAmount.toString()), 'XRP');
-						console.log('💸 Actually added:', dropsToXrp(actualAddedAmount.toString()), 'XRP');
-						console.log('💸 Expected to add:', dropsToXrp(expectedAddedAmount.toString()), 'XRP');
-
-						// Verify the amount actually increased
-						if (actualAddedAmount <= 0n) {
-							console.error('❌ Channel amount did not increase');
-							throw new Error('Deposit transaction failed - channel amount did not increase');
-						}
 
 						// Verify the correct amount was added (allowing for small rounding differences)
 						const difference = actualAddedAmount > expectedAddedAmount 
@@ -642,7 +688,7 @@ export default function RoomPage() {
 											: '0',
 									}
 								: null,
-							roomParticipants: roomResult.data?.participants.length,
+							roomParticipants: roomResult?.data?.participants.length,
 						});
 
 						// QRコードを非表示
@@ -691,7 +737,7 @@ export default function RoomPage() {
 						const addedAmountStr = dropsToXrp(actualAddedAmount.toString());
 						if (isJoined) {
 							// ルーム情報を再取得して最新の権限状態を確認
-							const updatedParticipant = roomResult.data?.participants.find((p) => p.userId === userId);
+							const updatedParticipant = roomResult?.data?.participants.find((p) => p.userId === userId);
 							
 							if (updatedParticipant?.canSpeak && !isHost) {
 								alert(`✅ デポジットが正常に追加されました！\n\n追加額: ${addedAmountStr} XRP\n\n音声の送受信が再開されます。\n音声配信を再開するには「音声を開始」ボタンをクリックしてください。`);
@@ -735,7 +781,19 @@ export default function RoomPage() {
 			}
 		} catch (error) {
 			console.error('Failed to add deposit:', error);
-			alert('デポジットの追加に失敗しました');
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			
+			// Provide more specific error messages
+			if (errorMessage.includes('XRPL explorer')) {
+				// This is our custom error with explorer link
+				alert(errorMessage);
+			} else if (errorMessage.includes('timeout')) {
+				alert('デポジットの追加がタイムアウトしました。Xummアプリで署名を完了してください。');
+			} else if (errorMessage.includes('cancelled')) {
+				alert('デポジットの追加がキャンセルされました。');
+			} else {
+				alert(`デポジットの追加に失敗しました: ${errorMessage}`);
+			}
 		} finally {
 			setXummQrUrl(null);
 			setXummQrCode(null);
@@ -779,6 +837,12 @@ export default function RoomPage() {
 				// サーバー側でルームに参加
 				joinRoom({ roomId });
 
+				// 少し待ってから参加者情報を再取得
+				await new Promise((resolve) => setTimeout(resolve, 500));
+
+				// 参加者情報を再取得して確実に参加が完了したことを確認
+				await refetchRoom();
+
 				// 支払いタイマーを開始
 				const existingAmountXRP = existingChannel.lastAmount
 					? Number(dropsToXrp(existingChannel.lastAmount))
@@ -807,7 +871,9 @@ export default function RoomPage() {
 
 			// 初回の場合は金額を設定
 			if (channelAmountXRP === 0) {
+				console.log('Setting initial channel amount:', defaultAmountXRP);
 				setChannelAmountXRP(defaultAmountXRP);
+				console.log('isCreatingChannel should be true now');
 				return; // UIを表示するためにここで一旦終了
 			}
 
@@ -831,6 +897,12 @@ export default function RoomPage() {
 
 				// サーバー側でルームに参加
 				joinRoom({ roomId });
+
+				// 少し待ってから参加者情報を再取得
+				await new Promise((resolve) => setTimeout(resolve, 500));
+
+				// 参加者情報を再取得して確実に参加が完了したことを確認
+				await refetchRoom();
 
 				// 支払いタイマーを開始
 				const existingAmountXRP = result.channel.lastAmount
@@ -974,6 +1046,12 @@ export default function RoomPage() {
 
 						// サーバー側でルームに参加
 						joinRoom({ roomId });
+
+						// 少し待ってから参加者情報を再取得
+						await new Promise((resolve) => setTimeout(resolve, 500));
+
+						// 参加者情報を再取得して確実に参加が完了したことを確認
+						await refetchRoom();
 
 						// 支払いタイマーを開始
 						const totalSeconds = startPaymentTimer(newChannel.channelId, 0);
@@ -1136,6 +1214,15 @@ export default function RoomPage() {
 			</main>
 		);
 	}
+
+	console.log('Render state:', {
+		isCreatingChannel,
+		isAddingDeposit,
+		isJoined,
+		channelAmountXRP,
+		xummQrCode,
+		xummQrUrl
+	});
 
 	return (
 		<main className="min-h-screen bg-gradient-to-b from-[#1a1b3a] to-[#0f0f23] text-white">
@@ -1436,12 +1523,14 @@ export default function RoomPage() {
 															handleJoinRoom();
 														}}
 														disabled={
-															isJoining ||
-															isLoadingChannel ||
-															!hostInRoomState ||
-															(!isHost &&
-																room.xrpPerMinute > 0 &&
-																(!myChannel ||
+															!!(
+																isJoining ||
+																isLoadingChannel ||
+																hostInRoomState === false ||
+																(room.status === 'WAITING' && !isHost) ||
+																(!isHost &&
+																	room.xrpPerMinute > 0 &&
+																	myChannel &&
 																	Math.floor(
 																		Number(
 																			dropsToXrp(
@@ -1449,7 +1538,8 @@ export default function RoomPage() {
 																					BigInt(myChannel.lastAmount || '0'),
 																			),
 																		) / (room.xrpPerMinute || 0.01),
-																	) <= 0))
+																	) <= 0)
+															)
 														}
 														className="w-full rounded-full bg-blue-600 px-8 py-3 font-semibold text-lg transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
 													>
@@ -1457,7 +1547,7 @@ export default function RoomPage() {
 															? '参加中...'
 															: isLoadingChannel
 																? 'チャネル確認中...'
-																: !hostInRoomState && !isHost
+																: hostInRoomState === false && !isHost
 																	? 'ホスト待機中...'
 																	: room.status === 'WAITING'
 																		? 'ルームに参加 (開始待ち)'
@@ -1465,7 +1555,7 @@ export default function RoomPage() {
 													</button>
 
 													{/* 参加できない理由の表示 */}
-													{!hostInRoomState && !isHost && (
+													{hostInRoomState === false && !isHost && (
 														<p className="mt-2 text-center text-sm text-gray-400">
 															🔄 ホストがルームに入るまでお待ちください
 														</p>

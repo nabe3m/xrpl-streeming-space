@@ -56,7 +56,7 @@ export function AudioControls({
 			});
 			
 			// Require at least 5 minutes of balance to request speak permission
-			return remainingMinutes >= 5;
+			return remainingMinutes >= 1;
 		} catch (error) {
 			console.error('Error calculating balance:', error);
 			return false;

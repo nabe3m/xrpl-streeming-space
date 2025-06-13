@@ -11,13 +11,38 @@ export function HeaderNav() {
 
 	useEffect(() => {
 		setMounted(true);
+		// 初回読み込み時にlocalStorageから取得
 		const storedUserId = localStorage.getItem('userId');
 		setUserId(storedUserId);
+
+		// localStorageの変更を監視してリアクティブに更新
+		const handleStorageChange = (e: StorageEvent) => {
+			if (e.key === 'userId') {
+				setUserId(e.newValue);
+			}
+		};
+
+		// カスタムイベントを監視（同じウィンドウ内での変更用）
+		const handleAuthChange = () => {
+			const newUserId = localStorage.getItem('userId');
+			setUserId(newUserId);
+		};
+
+		window.addEventListener('storage', handleStorageChange);
+		window.addEventListener('authChange', handleAuthChange);
+
+		return () => {
+			window.removeEventListener('storage', handleStorageChange);
+			window.removeEventListener('authChange', handleAuthChange);
+		};
 	}, []);
 
 	const handleLogout = () => {
 		localStorage.removeItem('userId');
 		localStorage.removeItem('walletAddress');
+		setUserId(null);
+		// カスタムイベントを発火して他のコンポーネントに通知
+		window.dispatchEvent(new Event('authChange'));
 		router.push('/');
 	};
 
@@ -30,6 +55,9 @@ export function HeaderNav() {
 		<div className="flex items-center gap-6">
 			{userId ? (
 				<>
+					<Link href="/dashboard" className="transition hover:text-blue-400">
+						ダッシュボード
+					</Link>
 					<Link href="/rooms" className="transition hover:text-blue-400">
 						ルーム一覧
 					</Link>

@@ -1,10 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { dropsToXrp } from 'xrpl';
-import { Xumm } from 'xumm';
-import { env } from '~/env';
 import { api } from '~/trpc/react';
 
 export default function PaymentChannelsPage() {
@@ -13,8 +12,15 @@ export default function PaymentChannelsPage() {
 	const roomId = params.roomId as string;
 
 	const [isClosing, setIsClosing] = useState(false);
+	const [userId, setUserId] = useState<string | null>(null);
+	const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-	const userId = typeof window !== 'undefined' ? localStorage.getItem('userId') : null;
+	// Check authentication on client side
+	useEffect(() => {
+		const storedUserId = localStorage.getItem('userId');
+		setUserId(storedUserId);
+		setIsCheckingAuth(false);
+	}, []);
 
 	// ルーム情報を取得
 	const { data: room } = api.room.get.useQuery({ id: roomId });
@@ -29,6 +35,15 @@ export default function PaymentChannelsPage() {
 		);
 
 	const { mutateAsync: batchCloseChannels } = api.paymentChannel.batchCloseChannels.useMutation();
+
+	// Show loading state while checking authentication
+	if (isCheckingAuth) {
+		return (
+			<main className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#1a1b3a] to-[#0f0f23] text-white">
+				<p>Loading...</p>
+			</main>
+		);
+	}
 
 	// ホスト権限チェック
 	if (room && room.creatorId !== userId) {
@@ -52,23 +67,52 @@ export default function PaymentChannelsPage() {
 				return;
 			}
 
-			// Xummで各トランザクションを処理
-			const xumm = new Xumm(env.NEXT_PUBLIC_XUMM_API_KEY);
+			// Process each transaction with Xumm
+			for (let i = 0; i < result.results.length; i++) {
+				const closeResult = result.results[i];
+				if (!closeResult) continue;
+				
+				const { channelId, payload } = closeResult;
+				console.log('Processing channel:', channelId, payload);
 
-			for (const { channelId, payload } of result.results) {
-				const subscription = await xumm.payload?.createAndSubscribe(payload as any, (event) => {
-					if (event.data.signed === true) {
-						console.log(`Channel ${channelId} claim signed`);
-					}
-				});
-
-				console.log('Subscription URL:', subscription?.created.next.always);
-
-				if (subscription?.created.refs.qr_png) {
-					window.open(subscription.created.next.always, '_blank');
+				// Check for different possible property names
+				const deeplink = payload.deeplink;
+				const qrCode = payload.qrUrl;
+				
+				if (deeplink) {
+					console.log('Opening deeplink:', deeplink);
+					window.open(deeplink, '_blank');
+					
+					// Wait for user to complete the signature
+					await new Promise(resolve => {
+						setTimeout(() => {
+							if (i === result.results.length - 1) {
+								alert('Xummウォレットで署名を完了してください。\n\n全ての署名が完了したらOKを押してください。');
+							} else {
+								alert(`チャネル ${i + 1}/${result.results.length} の署名を完了してください。\n\n署名が完了したらOKを押して次のチャネルに進んでください。`);
+							}
+							resolve(undefined);
+						}, 2000);
+					});
+				} else if (qrCode) {
+					// If on desktop, show QR code
+					console.log('Opening QR Code URL:', qrCode);
+					window.open(qrCode, '_blank');
+					
+					await new Promise(resolve => {
+						setTimeout(() => {
+							alert(`チャネル ${i + 1}/${result.results.length} のQRコードをXummアプリでスキャンしてください。\n\n署名が完了したらOKを押してください。`);
+							resolve(undefined);
+						}, 2000);
+					});
+				} else {
+					console.error('Payload structure for channel', channelId, ':', payload);
 				}
-
-				await subscription?.resolved;
+				
+				// Rate limiting between channels
+				if (i < result.results.length - 1) {
+					await new Promise((resolve) => setTimeout(resolve, 1000));
+				}
 			}
 
 			alert('Payment Channelsのクローズを完了しました');
@@ -105,6 +149,16 @@ export default function PaymentChannelsPage() {
 						</div>
 					)}
 
+					<div className="mb-4 rounded-lg bg-blue-900/50 p-4">
+						<p className="text-blue-300 text-sm">
+							💡 ヒント: 支払いをクレームのみ（チャネルを閉じない）場合は、
+							<Link href="/dashboard/payment-claims" className="underline hover:text-blue-200">
+								Payment Claims管理ページ
+							</Link>
+							をご利用ください。
+						</p>
+					</div>
+
 					<div className="rounded-lg bg-white/10 p-6">
 						<div className="mb-4 flex items-center justify-between">
 							<h3 className="font-bold text-xl">受信Payment Channels</h3>
@@ -114,7 +168,7 @@ export default function PaymentChannelsPage() {
 								disabled={isClosing || !channels || channels.length === 0}
 								className="rounded bg-green-600 px-6 py-2 font-semibold transition hover:bg-green-700 disabled:opacity-50"
 							>
-								{isClosing ? 'クローズ中...' : '一括クローズ'}
+								{isClosing ? 'クローズ中...' : '順次クローズ'}
 							</button>
 						</div>
 

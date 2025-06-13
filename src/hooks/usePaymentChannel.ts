@@ -62,6 +62,17 @@ export function usePaymentChannel({
 				paymentIntervalRef.current = null;
 				console.error('Payment timer stopped due to error');
 			}
+			
+			// 残高不足エラーの場合は、onBalanceInsufficientコールバックを呼び出す
+			if (error.message && (
+				error.message.includes('残高不足') || 
+				error.message.includes('Amount must be greater than last signed amount')
+			)) {
+				if (onBalanceInsufficient) {
+					console.log('Calling onBalanceInsufficient callback due to payment error');
+					onBalanceInsufficient();
+				}
+			}
 		},
 	});
 
@@ -85,6 +96,7 @@ export function usePaymentChannel({
 			// Calculate initial seconds based on existing payment amount or resume point
 			let totalSeconds = 0;
 			let lastSignedAmount = existingAmountXRP || 0;
+			let lastKnownDbAmount = existingAmountXRP || 0; // Track the DB amount separately
 
 			// If resuming from a specific second count (after deposit), use that
 			if (resumeFromSeconds !== undefined && resumeFromSeconds > 0) {
@@ -127,7 +139,7 @@ export function usePaymentChannel({
 			// Store the current total seconds
 			totalPaidSecondsRef.current = totalSeconds;
 
-			const interval = setInterval(() => {
+			const interval = setInterval(async () => {
 				totalSeconds += 1;
 				totalPaidSecondsRef.current = totalSeconds;
 
@@ -142,20 +154,45 @@ export function usePaymentChannel({
 				const roundedXrp = Math.round(totalXrp * 1000000) / 1000000;
 
 				// 残高チェックを先に実行（支払い前に確認）
-				if (myChannel) {
-					const totalDepositXRP = Number(dropsToXrp(myChannel.amount));
-
-					// 現在の使用可能残高を計算
-					const usedAmountXRP = lastSignedAmount;
-					const availableBalanceXRP = totalDepositXRP - usedAmountXRP;
+				// 最新のチャネル情報を取得
+				const { data: latestChannel } = await refetchMyChannel();
+				if (latestChannel) {
+					const totalDepositXRP = Number(dropsToXrp(latestChannel.amount));
+					
+					// データベースのlastAmountを使用して正確な使用済み額を取得
+					const dbLastAmountXRP = latestChannel.lastAmount ? Number(dropsToXrp(latestChannel.lastAmount)) : 0;
+					
+					// DBの値が更新されていたら、lastKnownDbAmountを更新
+					if (dbLastAmountXRP > lastKnownDbAmount) {
+						lastKnownDbAmount = dbLastAmountXRP;
+						// lastSignedAmountも更新（DBに反映されたので）
+						if (dbLastAmountXRP >= lastSignedAmount) {
+							lastSignedAmount = dbLastAmountXRP;
+						}
+					}
+					
+					// 使用済み額は、DBの値と現在のlastSignedAmountの大きい方を使用
+					const actualUsedAmountXRP = Math.max(dbLastAmountXRP, lastSignedAmount);
+					const availableBalanceXRP = totalDepositXRP - actualUsedAmountXRP;
 
 					// 次の支払い額が残高を超える場合は停止
-					if (roundedXrp > totalDepositXRP) {
-						console.warn('Payment timer stopped - insufficient balance:', {
+					// roundedXrpは累積額なので、新規支払い額は roundedXrp - actualUsedAmountXRP
+					const newPaymentAmount = roundedXrp - actualUsedAmountXRP;
+					
+					// より厳密なチェック: 次の署名が不可能な場合も停止
+					// XRPLの仕様により、署名金額は単調増加する必要がある
+					if (newPaymentAmount > availableBalanceXRP || 
+					    roundedXrp > totalDepositXRP ||
+					    roundedXrp <= actualUsedAmountXRP) {
+						console.warn('Payment timer stopped - insufficient balance or invalid amount:', {
 							requestedAmount: roundedXrp,
 							totalDeposit: totalDepositXRP,
-							usedAmount: usedAmountXRP,
+							actualUsedAmount: actualUsedAmountXRP,
 							availableBalance: availableBalanceXRP,
+							newPaymentAmount,
+							dbLastAmount: dbLastAmountXRP,
+							localLastSignedAmount: lastSignedAmount,
+							wouldBeValid: roundedXrp > actualUsedAmountXRP,
 						});
 						clearInterval(interval);
 						paymentIntervalRef.current = null;
@@ -167,15 +204,16 @@ export function usePaymentChannel({
 						return;
 					}
 
-					// 残高が少なくなってきた場合の警告（残り5分以下）
-					const nextPaymentAmount = roundedXrp + (room.xrpPerMinute || 0) / 60; // 次の1分後の支払い額
-					if (nextPaymentAmount > totalDepositXRP) {
-						console.warn('Low balance warning - will run out soon:', {
+					// 残高が少なくなってきた場合の警告（残り1分以下）
+					const remainingMinutes = availableBalanceXRP / (room.xrpPerMinute || 0.01);
+					if (remainingMinutes < 1) {
+						console.warn('Low balance warning - less than 1 minute remaining:', {
 							currentAmount: roundedXrp,
-							nextAmount: nextPaymentAmount,
 							totalDeposit: totalDepositXRP,
+							actualUsedAmount: actualUsedAmountXRP,
+							availableBalance: availableBalanceXRP,
+							remainingMinutes,
 						});
-						return;
 					}
 				}
 
@@ -208,7 +246,7 @@ export function usePaymentChannel({
 
 			return totalSeconds;
 		},
-		[room?.xrpPerMinute, signPayment, onSecondsUpdate, myChannel, onBalanceInsufficient],
+		[room?.xrpPerMinute, signPayment, onSecondsUpdate, onBalanceInsufficient, refetchMyChannel],
 	);
 
 	const stopPaymentTimer = useCallback(() => {

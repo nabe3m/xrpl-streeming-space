@@ -108,6 +108,12 @@ export function useAgora({
 						// トラックを削除
 						remoteAudioTracksRef.current.delete(user.uid);
 						setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
+						// 音声レベルも削除
+						setRemoteAudioLevels((prev) => {
+							const newMap = new Map(prev);
+							newMap.delete(user.uid);
+							return newMap;
+						});
 					}
 				});
 
@@ -115,6 +121,12 @@ export function useAgora({
 					// トラックを削除
 					remoteAudioTracksRef.current.delete(user.uid);
 					setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
+					// 音声レベルも削除
+					setRemoteAudioLevels((prev) => {
+						const newMap = new Map(prev);
+						newMap.delete(user.uid);
+						return newMap;
+					});
 				});
 
 				// 接続状態の変化を監視
@@ -200,6 +212,35 @@ export function useAgora({
 				return true;
 			}
 
+			// 接続状態が中間状態の場合は待機
+			if (client.connectionState === 'CONNECTING' || client.connectionState === 'RECONNECTING') {
+				console.log('Connection in progress, waiting...', client.connectionState);
+				let waitCount = 0;
+				while (waitCount < 20) {
+					await new Promise(resolve => setTimeout(resolve, 500));
+					waitCount++;
+					// 毎回状態を再取得 (状態は動的に変わるのでas anyを使用)
+					const state: any = client.connectionState;
+					if (state === 'CONNECTED') {
+						setIsJoined(true);
+						return true;
+					} else if (state !== 'CONNECTING' && state !== 'RECONNECTING') {
+						// 接続中以外の状態になったら抜ける
+						break;
+					}
+				}
+			}
+
+			// 切断中の場合は完全に切断されるまで待つ
+			if (client.connectionState === 'DISCONNECTING') {
+				console.log('Still disconnecting, waiting...');
+				let waitCount = 0;
+				while (client.connectionState === 'DISCONNECTING' && waitCount < 10) {
+					await new Promise(resolve => setTimeout(resolve, 500));
+					waitCount++;
+				}
+			}
+
 			try {
 				const appId = env.NEXT_PUBLIC_AGORA_APP_ID;
 				const token = tokenOverride || defaultToken;
@@ -217,6 +258,7 @@ export function useAgora({
 					userId: numericUserId,
 					originalUid: uid,
 					tokenPreview: token ? `${token.substring(0, 20)}...` : 'null',
+					currentConnectionState: client.connectionState,
 				});
 
 				// トークンを使用してチャンネルに参加
@@ -242,8 +284,28 @@ export function useAgora({
 				console.error('Failed to establish connection after retries');
 				await client.leave();
 				return false;
-			} catch (error) {
+			} catch (error: any) {
 				console.error('Failed to join channel:', error);
+				
+				// UID_CONFLICT エラーの場合は、少し待ってから再試行
+				if (error?.code === 'UID_CONFLICT') {
+					console.log('UID conflict detected, waiting before retry...');
+					setIsJoined(false);
+					setConnectionState('DISCONNECTED');
+					
+					// 既存の接続をクリーンアップ
+					try {
+						await client.leave();
+					} catch (leaveError) {
+						console.error('Error leaving on UID conflict:', leaveError);
+					}
+					
+					// 少し待ってから再接続を促す
+					await new Promise(resolve => setTimeout(resolve, 2000));
+					
+					throw new Error('UID conflict - Another user is using this ID. Please try again.');
+				}
+				
 				throw error;
 			}
 		},

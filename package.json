@@ -16,6 +16,7 @@
 		"postinstall": "prisma generate",
 		"preview": "next build && next start",
 		"start": "next start",
+		"test:wallet": "node test-wallet.js",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {

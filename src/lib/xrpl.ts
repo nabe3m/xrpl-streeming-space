@@ -4,6 +4,7 @@ import {
 	signPaymentChannelClaim,
 	verifyPaymentChannelClaim,
 	xrpToDrops,
+	dropsToXrp,
 } from 'xrpl';
 import { env } from '~/env';
 
@@ -41,13 +42,20 @@ export interface PaymentChannelCreationParams {
 export async function createPaymentChannelTransaction(params: PaymentChannelCreationParams) {
 	const signatureWallet = await getSignatureWallet();
 
+	console.log('🚀 Creating PaymentChannel with signature wallet:', {
+		publicKey: signatureWallet.publicKey,
+		address: signatureWallet.address,
+		publicKeyLength: signatureWallet.publicKey.length,
+		publicKeyUppercase: signatureWallet.publicKey.toUpperCase(),
+	});
+
 	return {
 		TransactionType: 'PaymentChannelCreate' as const,
 		Account: params.senderAddress,
 		Destination: params.receiverAddress,
 		Amount: xrpToDrops(params.amountXRP),
 		SettleDelay: params.settleDelay || 86400,
-		PublicKey: signatureWallet.publicKey,
+		PublicKey: signatureWallet.publicKey.toUpperCase(),
 	};
 }
 
@@ -66,14 +74,30 @@ export async function signOffLedgerPayment(
 	const roundedAmountXRP = Math.round(amountXRP * 1000000) / 1000000;
 	const amountDrops = xrpToDrops(roundedAmountXRP);
 
-	const signature = signPaymentChannelClaim(channelId, amountDrops, signatureWallet.privateKey);
+	// Ensure channel ID is uppercase
+	const normalizedChannelId = channelId.toUpperCase();
 
-	console.log('🚀 signature', signature);
+	console.log('🔐 Signing off-ledger payment:', {
+		channelId: normalizedChannelId,
+		channelIdLength: normalizedChannelId.length,
+		amountXRP: roundedAmountXRP,
+		amountDrops,
+		publicKey: signatureWallet.publicKey.toUpperCase(),
+		address: signatureWallet.address,
+	});
+
+	const signature = signPaymentChannelClaim(normalizedChannelId, roundedAmountXRP.toString(), signatureWallet.privateKey);
+
+	// Ensure signature is uppercase for consistency
+	const normalizedSignature = signature.toUpperCase();
+	
+	console.log('🚀 Generated signature:', normalizedSignature);
+	console.log('🚀 Signature wallet public key:', signatureWallet.publicKey.toUpperCase());
 
 	return {
-		channelId,
+		channelId: normalizedChannelId,
 		amount: amountDrops,
-		signature,
+		signature: normalizedSignature,
 	};
 }
 
@@ -86,7 +110,26 @@ export async function verifyOffLedgerPayment(
 	// Round to 6 decimal places (XRP precision limit)
 	const roundedAmountXRP = Math.round(amountXRP * 1000000) / 1000000;
 	const amountDrops = xrpToDrops(roundedAmountXRP);
-	return verifyPaymentChannelClaim(channelId, amountDrops, signature, publicKey);
+	
+	// Ensure consistent case for all parameters
+	const normalizedChannelId = channelId.toUpperCase();
+	const normalizedSignature = signature.toUpperCase();
+	const normalizedPublicKey = publicKey.toUpperCase();
+	
+	console.log('🔍 Verifying payment signature:', {
+		channelId: normalizedChannelId,
+		channelIdLength: normalizedChannelId.length,
+		amountXRP: roundedAmountXRP,
+		amountDrops,
+		signatureLength: normalizedSignature.length,
+		publicKeyLength: normalizedPublicKey.length,
+		publicKey: normalizedPublicKey.substring(0, 16) + '...',
+	});
+	
+	const isValid = verifyPaymentChannelClaim(normalizedChannelId, roundedAmountXRP.toString(), normalizedSignature, normalizedPublicKey);
+	console.log('🔍 Verification result:', isValid ? '✅ VALID' : '❌ INVALID');
+	
+	return isValid;
 }
 
 export interface PaymentChannelClaimParams {
@@ -95,17 +138,74 @@ export interface PaymentChannelClaimParams {
 	amount: string;
 	signature: string;
 	publicKey: string;
+	accountAddress: string;
 }
 
 export async function createPaymentChannelClaimTransaction(params: PaymentChannelClaimParams) {
-	return {
+	// Ensure all amounts are in drops (strings)
+	const balanceDrops = params.balance.toString();
+	const amountDrops = params.amount.toString();
+	
+	// Ensure channel ID is uppercase
+	const normalizedChannelId = params.channelId.toUpperCase();
+	
+	console.log('📝 Creating claim transaction with params:', {
+		channelId: normalizedChannelId,
+		channelIdLength: normalizedChannelId.length,
+		balance: balanceDrops,
+		amount: amountDrops,
+		signatureLength: params.signature.length,
+		publicKeyFromDB: params.publicKey,
+		accountAddress: params.accountAddress,
+	});
+	
+	// Check if publicKey is in Base58 format (starts with 'a' and has specific length)
+	let publicKeyHex = params.publicKey;
+	if (publicKeyHex.startsWith('a') && publicKeyHex.length > 40 && publicKeyHex.length < 60) {
+		console.log('Public key appears to be in Base58 format, using signature wallet public key instead');
+		// Get the correct hex format public key from the signature wallet
+		const signatureWallet = await getSignatureWallet();
+		publicKeyHex = signatureWallet.publicKey;
+		console.log('Using hex public key from signature wallet:', publicKeyHex);
+		console.log('Signature wallet address:', signatureWallet.address);
+	}
+	
+	const transaction = {
 		TransactionType: 'PaymentChannelClaim' as const,
-		Channel: params.channelId,
-		Balance: params.balance,
-		Amount: params.amount,
-		Signature: params.signature,
-		PublicKey: params.publicKey,
+		Account: params.accountAddress,
+		Channel: normalizedChannelId, // Use normalized channel ID
+		Balance: balanceDrops,
+		Amount: amountDrops,
+		Signature: params.signature.toUpperCase(), // Ensure signature is uppercase
+		PublicKey: publicKeyHex.toUpperCase(), // Ensure public key is uppercase hex
 	};
+	
+	console.log('Creating PaymentChannelClaim transaction:', JSON.stringify(transaction, null, 2));
+	
+	// Verify signature locally before sending
+	try {
+		const isValid = await verifyOffLedgerPayment(
+			normalizedChannelId, // Use normalized channel ID
+			Number(dropsToXrp(amountDrops)),
+			params.signature,
+			publicKeyHex // verifyOffLedgerPayment will handle uppercase conversion
+		);
+		console.log('🔍 Local signature verification:', isValid ? '✅ VALID' : '❌ INVALID');
+		
+		if (!isValid) {
+			console.error('⚠️ WARNING: Signature verification failed locally. This may cause tecBAD_SIGNATURE on ledger.');
+			console.error('Debug info:', {
+				channelId: normalizedChannelId,
+				amount: amountDrops,
+				signatureFirst20: params.signature.substring(0, 20),
+				publicKeyFirst20: publicKeyHex.substring(0, 20),
+			});
+		}
+	} catch (error) {
+		console.error('Failed to verify signature locally:', error);
+	}
+	
+	return transaction;
 }
 
 export async function getAccountChannels(accountAddress: string, destinationAddress?: string) {

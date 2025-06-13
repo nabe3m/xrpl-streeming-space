@@ -53,6 +53,8 @@ export default function SignInPage() {
 				if (result.user) {
 					localStorage.setItem('user', JSON.stringify(result.user));
 					localStorage.setItem('userId', result.user.id);
+					// カスタムイベントを発火してヘッダーを更新
+					window.dispatchEvent(new Event('authChange'));
 					clearInterval(checkInterval);
 					router.push('/rooms');
 				}

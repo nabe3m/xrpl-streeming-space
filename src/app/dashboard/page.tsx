@@ -3,13 +3,14 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { dropsToXrp } from 'xrpl';
 import { api } from '~/trpc/react';
 
 export default function DashboardPage() {
 	const router = useRouter();
 	const [activeTab, setActiveTab] = useState<'hosted' | 'participated' | 'nfts'>('hosted');
-
-	const userId = typeof window !== 'undefined' ? localStorage.getItem('userId') : null;
+	const [userId, setUserId] = useState<string | null>(null);
+	const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
 	const { data: hostedRooms } = api.user.getRoomHistory.useQuery(
 		{ limit: 20 },
@@ -25,11 +26,28 @@ export default function DashboardPage() {
 		enabled: !!userId && activeTab === 'nfts',
 	});
 
+	// Check for claimable payments
+	const { data: claimableChannels } = api.paymentChannel.getAllReceivedChannels.useQuery(undefined, {
+		enabled: !!userId,
+	});
+
+	const claimableAmount = claimableChannels?.reduce((sum, channel) => {
+		if (channel.lastAmount) {
+			return sum + Number(dropsToXrp(channel.lastAmount));
+		}
+		return sum;
+	}, 0) || 0;
+
+	// Check authentication on client side
 	useEffect(() => {
-		if (!userId) {
+		const storedUserId = localStorage.getItem('userId');
+		setUserId(storedUserId);
+		setIsCheckingAuth(false);
+		
+		if (!storedUserId) {
 			router.push('/auth/signin');
 		}
-	}, [userId, router]);
+	}, [router]);
 
 	const formatDate = (date: Date) => {
 		return new Date(date).toLocaleDateString('ja-JP', {
@@ -55,18 +73,54 @@ export default function DashboardPage() {
 		}
 	};
 
+	// Show loading state while checking authentication
+	if (isCheckingAuth) {
+		return (
+			<main className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#1a1b3a] to-[#0f0f23] text-white">
+				<p>Loading...</p>
+			</main>
+		);
+	}
+
 	return (
 		<main className="min-h-screen bg-gradient-to-b from-[#1a1b3a] to-[#0f0f23] text-white">
 			<div className="container mx-auto px-4 py-8">
 				<div className="mb-8 flex items-center justify-between">
 					<h1 className="font-bold text-3xl">ダッシュボード</h1>
-					<Link
-						href="/profile"
-						className="rounded-full bg-blue-600 px-6 py-2 font-semibold transition hover:bg-blue-700"
-					>
-						プロフィール設定
-					</Link>
+					<div className="flex gap-2">
+						<Link
+							href="/dashboard/payment-claims"
+							className="rounded-full bg-purple-600 px-6 py-2 font-semibold transition hover:bg-purple-700"
+						>
+							Payment Claims
+						</Link>
+						<Link
+							href="/profile"
+							className="rounded-full bg-blue-600 px-6 py-2 font-semibold transition hover:bg-blue-700"
+						>
+							プロフィール設定
+						</Link>
+					</div>
 				</div>
+
+				{claimableAmount > 0 && (
+					<div className="mb-6 rounded-lg bg-gradient-to-r from-purple-600 to-purple-700 p-4">
+						<div className="flex items-center justify-between">
+							<div>
+								<p className="font-semibold">クレーム可能な支払いがあります</p>
+								<p className="text-sm opacity-90">
+									合計: {claimableAmount.toFixed(6)} XRP ({claimableChannels?.filter(ch => ch.lastAmount).length || 0} チャネル)
+								</p>
+							</div>
+							<Link
+								href="/dashboard/payment-claims"
+								className="rounded bg-white px-4 py-2 font-semibold text-purple-700 transition hover:bg-gray-100"
+							>
+								クレームする →
+							</Link>
+						</div>
+					</div>
+				)}
 
 				<div className="mb-6 flex gap-4">
 					<button
