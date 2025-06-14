@@ -143,7 +143,7 @@ export default function DashboardPage() {
 					>
 						参加したルーム
 					</button>
-					<button
+					{/* <button
 						onClick={() => setActiveTab('nfts')}
 						className={`rounded-full px-6 py-2 font-semibold transition ${
 							activeTab === 'nfts'
@@ -152,7 +152,7 @@ export default function DashboardPage() {
 						}`}
 					>
 						発行したNFT
-					</button>
+					</button> */}
 				</div>
 
 				<div className="rounded-lg bg-white/10 p-6">
