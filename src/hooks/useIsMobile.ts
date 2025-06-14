@@ -4,8 +4,11 @@ export function useIsMobile() {
 	const [isMobile, setIsMobile] = useState(false);
 	const [isIOS, setIsIOS] = useState(false);
 	const [isAndroid, setIsAndroid] = useState(false);
+	const [mounted, setMounted] = useState(false);
 
 	useEffect(() => {
+		setMounted(true);
+		
 		const checkIsMobile = () => {
 			// Check if it's a mobile device based on user agent
 			const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
@@ -35,5 +38,10 @@ export function useIsMobile() {
 		};
 	}, []);
 
-	return { isMobile, isIOS, isAndroid };
+	// Return false values during SSR to avoid hydration mismatch
+	return { 
+		isMobile: mounted ? isMobile : false, 
+		isIOS: mounted ? isIOS : false, 
+		isAndroid: mounted ? isAndroid : false 
+	};
 }
