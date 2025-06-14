@@ -1,5 +1,6 @@
 import { authRouter } from '~/server/api/routers/auth';
 import { nftRouter } from '~/server/api/routers/nft';
+import { nFTTicketRouter } from '~/server/api/routers/nftTicket';
 import { paymentChannelRouter } from '~/server/api/routers/paymentChannel';
 import { roomRouter } from '~/server/api/routers/room';
 import { userRouter } from '~/server/api/routers/user';
@@ -17,6 +18,7 @@ export const appRouter = createTRPCRouter({
 	paymentChannel: paymentChannelRouter,
 	user: userRouter,
 	nft: nftRouter,
+	nftTicket: nFTTicketRouter,
 	xumm: xummRouter,
 });
 

@@ -2,6 +2,9 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { generateAgoraToken } from '~/lib/agora';
 import { getSignatureWallet } from '~/lib/xrpl';
+import { generateTaxonForRoom, createNFTokenMinterTransaction } from '~/lib/xrpl-nft';
+import { uploadToIPFS, uploadMetadataToIPFS, createNFTTicketMetadata } from '~/lib/ipfs';
+import { createTransactionPayload } from '~/lib/xumm';
 import { createTRPCRouter, protectedProcedure, publicProcedure } from '~/server/api/trpc';
 
 export const roomRouter = createTRPCRouter({
@@ -10,13 +13,67 @@ export const roomRouter = createTRPCRouter({
 			z.object({
 				title: z.string().min(1).max(100),
 				description: z.string().optional(),
+				paymentMode: z.enum(['PAYMENT_CHANNEL', 'NFT_TICKET']).default('PAYMENT_CHANNEL'),
 				xrpPerMinute: z.number().min(0).default(0.01),
-				nftTokenId: z.string().optional(),
-				nftCollectionId: z.string().optional(),
+				nftTicketPrice: z.number().min(0).optional(),
+				nftTicketImage: z.string().optional(), // Base64 image data
 			}),
 		)
 		.mutation(async ({ ctx, input }) => {
 			const agoraChannelName = `room_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+			let nftTicketImageUrl: string | undefined;
+			let nftTicketMetadataUri: string | undefined;
+			let nftTicketTaxon: number | undefined;
+
+			// If NFT ticket mode, prepare NFT data
+			if (input.paymentMode === 'NFT_TICKET') {
+				if (!input.nftTicketPrice || !input.nftTicketImage) {
+					throw new TRPCError({
+						code: 'BAD_REQUEST',
+						message: 'NFT ticket price and image are required for NFT ticket mode',
+					});
+				}
+
+				// Upload image to IPFS
+				const base64Data = input.nftTicketImage.split(',')[1] || '';
+				const imageBlob = new Blob([Buffer.from(base64Data, 'base64')]);
+				const imageFile = new File([imageBlob], 'ticket.png', { type: 'image/png' });
+				console.log('Uploading NFT ticket image to IPFS...');
+				const imageResult = await uploadToIPFS(imageFile);
+				nftTicketImageUrl = imageResult.url;
+				console.log('NFT ticket image uploaded:', nftTicketImageUrl);
+
+				// Get user info for metadata
+				const user = await ctx.db.user.findUnique({
+					where: { id: ctx.session.userId },
+				});
+
+				if (!user) {
+					throw new TRPCError({
+						code: 'NOT_FOUND',
+						message: 'User not found',
+					});
+				}
+
+				// Create and upload metadata
+				const roomId = `room_${Date.now()}`;
+				nftTicketTaxon = generateTaxonForRoom(roomId);
+				
+				const metadata = createNFTTicketMetadata(
+					input.title,
+					input.description || null,
+					nftTicketImageUrl,
+					user.nickname || user.walletAddress,
+					roomId,
+					user.walletAddress  // ホストのウォレットアドレスを追加
+				);
+				
+				console.log('Uploading NFT metadata to IPFS...');
+				const metadataResult = await uploadMetadataToIPFS(metadata);
+				nftTicketMetadataUri = metadataResult.url;
+				console.log('NFT metadata uploaded:', nftTicketMetadataUri);
+			}
 
 			const room = await ctx.db.room.create({
 				data: {
@@ -24,9 +81,12 @@ export const roomRouter = createTRPCRouter({
 					description: input.description,
 					creatorId: ctx.session.userId,
 					agoraChannelName,
+					paymentMode: input.paymentMode,
 					xrpPerMinute: input.xrpPerMinute,
-					nftTokenId: input.nftTokenId,
-					nftCollectionId: input.nftCollectionId,
+					nftTicketPrice: input.nftTicketPrice,
+					nftTicketImageUrl,
+					nftTicketMetadataUri,
+					nftTicketTaxon,
 				},
 				include: {
 					creator: true,
@@ -566,5 +626,164 @@ export const roomRouter = createTRPCRouter({
 
 			console.log('Speaker permission released for user:', ctx.session.userId);
 			return updated;
+		}),
+
+	// Check NFTokenMinter settings for room creation
+	checkNFTokenMinterSettings: protectedProcedure
+		.query(async ({ ctx }) => {
+			const user = await ctx.db.user.findUnique({
+				where: { id: ctx.session.userId },
+			});
+
+			if (!user) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'User not found',
+				});
+			}
+
+			// Get signature wallet address
+			const signatureWallet = await getSignatureWallet();
+			const minterAddress = signatureWallet.address;
+
+			// データベースから認可状態を確認
+			const isAuthorized = user.nftokenMinter === minterAddress;
+
+			console.log(`NFTokenMinter check for ${user.walletAddress}:`, {
+				minterAddress,
+				isAuthorized,
+				dbNftokenMinter: user.nftokenMinter,
+				dbNftokenMinterSetAt: user.nftokenMinterSetAt,
+				timestamp: new Date().toISOString(),
+			});
+			
+			// 追加のデバッグ情報
+			try {
+				const { getXRPLClient } = await import('~/lib/xrpl');
+				const client = await getXRPLClient();
+				
+				// 直接account_infoを確認
+				const accountInfo = await client.request({
+					command: 'account_info',
+					account: user.walletAddress,
+					ledger_index: 'validated',
+				});
+				
+				console.log('Direct account_info check:', {
+					account: user.walletAddress,
+					hasNFTokenMinter: 'NFTokenMinter' in accountInfo.result.account_data,
+					NFTokenMinter: (accountInfo.result.account_data as any).NFTokenMinter,
+					flags: accountInfo.result.account_data.Flags,
+				});
+			} catch (e) {
+				console.error('Debug check failed:', e);
+			}
+
+			return {
+				userAddress: user.walletAddress,
+				minterAddress,
+				isAuthorized,
+			};
+		}),
+
+	// Create NFTokenMinter authorization payload
+	authorizeMinter: protectedProcedure
+		.mutation(async ({ ctx }) => {
+			const user = await ctx.db.user.findUnique({
+				where: { id: ctx.session.userId },
+			});
+
+			if (!user) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'User not found',
+				});
+			}
+
+			// Get signature wallet address
+			const signatureWallet = await getSignatureWallet();
+			const minterAddress = signatureWallet.address;
+
+			// Create AccountSet transaction
+			const transaction = createNFTokenMinterTransaction(
+				user.walletAddress,
+				minterAddress
+			);
+
+			// Create Xumm payload
+			const payload = await createTransactionPayload(transaction);
+
+			return {
+				payload,
+				minterAddress,
+			};
+		}),
+
+	// Clear NFTokenMinter (for debugging/reset)
+	clearMinter: protectedProcedure
+		.mutation(async ({ ctx }) => {
+			const user = await ctx.db.user.findUnique({
+				where: { id: ctx.session.userId },
+			});
+
+			if (!user) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'User not found',
+				});
+			}
+
+			// Create AccountSet transaction to clear NFTokenMinter
+			const { clearNFTokenMinterTransaction } = await import('~/lib/xrpl-nft');
+			const transaction = clearNFTokenMinterTransaction(user.walletAddress);
+
+			// Create Xumm payload
+			const payload = await createTransactionPayload(transaction);
+
+			return {
+				payload,
+			};
+		}),
+
+	// Confirm NFTokenMinter authorization after transaction
+	confirmMinterAuthorization: protectedProcedure
+		.input(
+			z.object({
+				transactionHash: z.string(),
+			})
+		)
+		.mutation(async ({ ctx, input }) => {
+			const user = await ctx.db.user.findUnique({
+				where: { id: ctx.session.userId },
+			});
+
+			if (!user) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'User not found',
+				});
+			}
+
+			// Get signature wallet address
+			const signatureWallet = await getSignatureWallet();
+			const minterAddress = signatureWallet.address;
+
+			// Update user with NFTokenMinter settings
+			await ctx.db.user.update({
+				where: { id: ctx.session.userId },
+				data: {
+					nftokenMinter: minterAddress,
+					nftokenMinterSetAt: new Date(),
+				},
+			});
+
+			console.log('NFTokenMinter authorization confirmed in database:', {
+				userId: ctx.session.userId,
+				walletAddress: user.walletAddress,
+				minterAddress,
+				transactionHash: input.transactionHash,
+			});
+
+			return { success: true };
 		}),
 });

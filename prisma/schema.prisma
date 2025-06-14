@@ -21,6 +21,10 @@ model User {
     instagramHandle String?
     createdAt       DateTime @default(now())
     updatedAt       DateTime @updatedAt
+    
+    // NFTokenMinter settings
+    nftokenMinter   String?  // Authorized NFTokenMinter address
+    nftokenMinterSetAt DateTime? // When the minter was set
 
     // Relations
     createdRooms    Room[]
@@ -28,6 +32,7 @@ model User {
     sentPaymentChannels PaymentChannel[] @relation("Sender")
     receivedPaymentChannels PaymentChannel[] @relation("Receiver")
     mintedNFTs      NFT[]
+    nftTickets      NFTTicket[]
 
     @@index([walletAddress])
 }
@@ -47,13 +52,22 @@ model Room {
     endedAt           DateTime?
     createdAt         DateTime @default(now())
     updatedAt         DateTime @updatedAt
+    
+    // NFT Ticket Mode fields
+    paymentMode       PaymentMode @default(PAYMENT_CHANNEL)
+    nftTicketPrice    Float?    // Price in XRP for NFT ticket
+    nftTicketImageUrl String?   // IPFS URL for NFT image
+    nftTicketMetadataUri String? // IPFS URL for NFT metadata
+    nftTicketTaxon    Int?      // Taxon for NFT series
 
     // Relations
     participants      RoomParticipant[]
     paymentChannels   PaymentChannel[]
+    nftTickets        NFTTicket[]
 
     @@index([creatorId])
     @@index([status])
+    @@index([paymentMode])
 }
 
 model RoomParticipant {
@@ -118,6 +132,27 @@ model NFT {
     @@index([tokenId])
 }
 
+model NFTTicket {
+    id              String   @id @default(cuid())
+    tokenId         String   @unique
+    roomId          String
+    room            Room     @relation(fields: [roomId], references: [id])
+    ownerId         String
+    owner           User     @relation(fields: [ownerId], references: [id])
+    issuerId        String   // Host's wallet address
+    price           Float    // Price paid in XRP
+    mintTxHash      String?  // NFTokenMint transaction hash
+    acceptTxHash    String?  // NFTokenAcceptOffer transaction hash
+    status          NFTTicketStatus @default(PENDING)
+    createdAt       DateTime @default(now())
+    updatedAt       DateTime @updatedAt
+
+    @@index([roomId])
+    @@index([ownerId])
+    @@index([tokenId])
+    @@index([status])
+}
+
 enum RoomStatus {
     WAITING
     LIVE
@@ -133,4 +168,17 @@ enum ChannelStatus {
     OPEN
     CLOSING
     CLOSED
+}
+
+enum PaymentMode {
+    PAYMENT_CHANNEL
+    NFT_TICKET
+}
+
+enum NFTTicketStatus {
+    PENDING
+    MINTED
+    OFFER_CREATED
+    ACCEPTED
+    FAILED
 }

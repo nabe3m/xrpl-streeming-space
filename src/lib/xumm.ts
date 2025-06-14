@@ -112,12 +112,35 @@ export async function createTransactionPayload(transaction: any) {
 	}
 }
 
+// Client-side function to subscribe to Xumm websocket
 export async function subscribeToPayload(uuid: string, callback: (data: any) => void) {
-	const xumm = getXummClient();
-
-	const subscription = xumm.payload?.subscribe(uuid, (event) => {
-		callback(event.data);
-	});
-
-	return subscription;
+	// For client-side, we use the websocket URL directly
+	// This doesn't require API secret
+	const wsUrl = `wss://xumm.app/sign/${uuid}`;
+	
+	const ws = new WebSocket(wsUrl);
+	
+	ws.onmessage = (event) => {
+		try {
+			const data = JSON.parse(event.data);
+			callback(data);
+		} catch (error) {
+			console.error('Failed to parse websocket message:', error);
+		}
+	};
+	
+	ws.onerror = (error) => {
+		console.error('Xumm websocket error:', error);
+	};
+	
+	ws.onclose = () => {
+		console.log('Xumm websocket closed');
+	};
+	
+	// Return a cleanup function
+	return () => {
+		if (ws.readyState === WebSocket.OPEN) {
+			ws.close();
+		}
+	};
 }

@@ -48,6 +48,7 @@ export default function SignInPage() {
 
 		const checkInterval = setInterval(async () => {
 			try {
+				console.log('Checking sign-in status for UUID:', payloadUuid);
 				const result = await verifySignIn({ uuid: payloadUuid });
 
 				if (result.user) {
@@ -60,6 +61,10 @@ export default function SignInPage() {
 				}
 			} catch (error) {
 				console.error('Error checking sign-in status:', error);
+				// TRPCエラーの詳細を表示
+				if (error && typeof error === 'object' && 'message' in error) {
+					console.error('Error message:', error.message);
+				}
 			}
 		}, 2000);
 

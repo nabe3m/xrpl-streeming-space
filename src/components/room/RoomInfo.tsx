@@ -11,7 +11,16 @@ export function RoomInfo({ room, participantCount }: RoomInfoProps) {
 						Host: {room.creator.nickname || room.creator.walletAddress.slice(0, 8)}
 						...
 					</p>
-					<p className="text-sm text-yellow-400">料金: {room.xrpPerMinute} XRP/分</p>
+					{room.paymentMode === 'NFT_TICKET' ? (
+						<>
+							<p className="text-sm text-purple-400">入場方式: NFTチケット</p>
+							{room.nftTicketPrice && (
+								<p className="text-sm text-purple-400">チケット価格: {room.nftTicketPrice} XRP</p>
+							)}
+						</>
+					) : (
+						<p className="text-sm text-yellow-400">料金: {room.xrpPerMinute} XRP/分</p>
+					)}
 				</div>
 				<div className="text-right">
 					<p className="text-gray-400 text-sm">

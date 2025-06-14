@@ -141,7 +141,7 @@ export default function ProfilePage() {
 								</div>
 
 								<div>
-									<label className="mb-1 block font-medium text-sm">Twitter</label>
+									<label className="mb-1 block font-medium text-sm">X</label>
 									<div className="flex items-center">
 										<span className="mr-2 text-gray-400">@</span>
 										<input

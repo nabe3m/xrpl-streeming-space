@@ -21,7 +21,7 @@ export const env = createEnv({
 			(str) => process.env.VERCEL_URL ?? str,
 			process.env.VERCEL ? z.string() : z.string().url(),
 		),
-		IPFS_API_URL: z.string().url().optional(),
+		IPFS_API_URL: z.string().optional(),
 		IPFS_API_KEY: z.string().optional(),
 	},
 

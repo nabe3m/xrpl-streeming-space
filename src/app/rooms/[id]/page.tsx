@@ -14,6 +14,7 @@ import { PaymentChannelCreation } from '~/components/room/PaymentChannelCreation
 import { PaymentStatusDisplay } from '~/components/room/PaymentStatusDisplay';
 import { RoomInfo } from '~/components/room/RoomInfo';
 import { SpeakPermissionNotification } from '~/components/room/SpeakPermissionNotification';
+import { NFTTicketPurchase } from '~/components/room/NFTTicketPurchase';
 import { env } from '~/env';
 import { useAgora } from '~/hooks/useAgora';
 import { usePaymentChannel } from '~/hooks/usePaymentChannel';
@@ -40,6 +41,8 @@ export default function RoomPage() {
 	const [depositAmountXRP, setDepositAmountXRP] = useState<number>(0);
 	const [revokedUsersRef] = useState(() => new Set<string>());
 	const [isBalanceInsufficient, setIsBalanceInsufficient] = useState(false);
+	const [hasNFTAccess, setHasNFTAccess] = useState<boolean | null>(null);
+	const [isCheckingNFTAccess, setIsCheckingNFTAccess] = useState(false);
 
 	// ログインチェック
 	useEffect(() => {
@@ -71,6 +74,47 @@ export default function RoomPage() {
 		| ParticipantWithAllFields
 		| undefined;
 	const [agoraToken, setAgoraToken] = useState<string | null>(null);
+
+	// Check NFT ticket access
+	const { data: nftAccessData, refetch: refetchNFTAccess } = api.nftTicket.checkAccess.useQuery(
+		{ roomId },
+		{
+			enabled: !!room && room.paymentMode === 'NFT_TICKET' && !!userId,
+		}
+	);
+
+	// Update access state when data changes
+	useEffect(() => {
+		console.log('NFT Access Data Update:', {
+			nftAccessData,
+			isCheckingNFTAccess,
+			hasNFTAccess,
+			roomId,
+			userId,
+			isHost
+		});
+		
+		if (nftAccessData !== undefined) {
+			setHasNFTAccess(nftAccessData.hasAccess);
+			setIsCheckingNFTAccess(false);
+			console.log('NFT Access State Updated:', {
+				hasAccess: nftAccessData.hasAccess,
+				tokenId: nftAccessData.tokenId
+			});
+		}
+	}, [nftAccessData]);
+
+	// Update NFT access check when room data changes
+	useEffect(() => {
+		if (room && room.paymentMode === 'NFT_TICKET' && userId && !isHost) {
+			// Only set checking if we don't have data yet
+			if (hasNFTAccess === null) {
+				setIsCheckingNFTAccess(true);
+			}
+			// Force refetch when room/user changes
+			refetchNFTAccess();
+		}
+	}, [room, userId, isHost, hasNFTAccess, refetchNFTAccess]);
 
 	// Check if host is in the room (for non-host users) - will be defined after useAgora hook
 	const [hostInRoomState, setHostInRoomState] = useState<boolean>(true);
@@ -414,7 +458,7 @@ export default function RoomPage() {
 		});
 	}, [userId, room, roomId, isHost, isLoadingChannel, myChannel]);
 
-	const handleJoinRoom = async () => {
+	const handleJoinRoomWithPayment = async () => {
 		console.log('🚀 handleJoinRoom clicked', { isJoining, roomId, userId, isHost });
 
 		if (!userId) {
@@ -441,19 +485,23 @@ export default function RoomPage() {
 			// Check if user is host
 			const currentIsHost = userId === room.creatorId;
 
-			// ペイメントチャネルの確認（ホスト以外で有料ルームの場合）
-			console.log('Checking payment channel requirements:', {
-				userId,
-				creatorId: room.creatorId,
-				currentIsHost,
-				xrpPerMinute: room.xrpPerMinute,
-				hasMyChannel: !!myChannel,
-				myChannelData: myChannel,
-				isLoadingChannel,
-			});
+			// NFTチケットモードの場合はペイメントチャネルをスキップ
+			if (room.paymentMode === 'NFT_TICKET') {
+				console.log('NFT ticket mode - skipping payment channel');
+			} else {
+				// ペイメントチャネルの確認（ホスト以外で有料ルームの場合）
+				console.log('Checking payment channel requirements:', {
+					userId,
+					creatorId: room.creatorId,
+					currentIsHost,
+					xrpPerMinute: room.xrpPerMinute,
+					hasMyChannel: !!myChannel,
+					myChannelData: myChannel,
+					isLoadingChannel,
+				});
 
-			// 有料ルームでホストではない場合、ペイメントチャネルが必要
-			if (!currentIsHost && room.xrpPerMinute && room.xrpPerMinute > 0) {
+				// 有料ルームでホストではない場合、ペイメントチャネルが必要
+				if (!currentIsHost && room.xrpPerMinute && room.xrpPerMinute > 0) {
 				// チャネルがまだロード中の場合は待つ
 				if (isLoadingChannel) {
 					console.log('Payment channel still loading...');
@@ -470,9 +518,10 @@ export default function RoomPage() {
 					console.log('Called handlePaymentChannelCreation');
 					return; // ルームには参加しない
 				}
-				// 既存のチャネルがある場合はそれを使用
-				console.log('Using existing payment channel:', myChannel.channelId);
-				setPaymentChannelId(myChannel.channelId);
+					// 既存のチャネルがある場合はそれを使用
+					console.log('Using existing payment channel:', myChannel.channelId);
+					setPaymentChannelId(myChannel.channelId);
+				}
 			}
 
 			// ペイメントチャネルの確認が完了したら、ルームに参加
@@ -484,8 +533,8 @@ export default function RoomPage() {
 			// Re-fetch room data to ensure we have the latest participant info
 			await refetchRoom();
 
-			// 支払いタイマーを開始（有料ルームの場合）
-			if (!currentIsHost && room.xrpPerMinute && room.xrpPerMinute > 0 && myChannel) {
+			// 支払いタイマーを開始（NFTチケットモード以外の有料ルームの場合）
+			if (!currentIsHost && room.paymentMode !== 'NFT_TICKET' && room.xrpPerMinute && room.xrpPerMinute > 0 && myChannel) {
 				// Convert existing amount from drops to XRP if it exists
 				const existingAmountXRP = myChannel.lastAmount
 					? Number(dropsToXrp(myChannel.lastAmount))
@@ -817,6 +866,47 @@ export default function RoomPage() {
 		setChannelAmountXRP(0); // リセット
 		// ルーム一覧に戻る（まだ参加していないのでleaveRoomは不要）
 		router.push('/rooms');
+	};
+
+	const handleJoinRoom = async () => {
+		if (!room || !userId) return;
+
+		// For NFT ticket mode, just join directly
+		if (room.paymentMode === 'NFT_TICKET') {
+			try {
+				setIsJoining(true);
+
+				// Join room on server
+				joinRoom({ roomId });
+
+				// Wait a bit for the join to process
+				await new Promise((resolve) => setTimeout(resolve, 500));
+
+				// Refetch room data
+				await refetchRoom();
+
+				// Get Agora token
+				const { token } = await getAgoraToken({ roomId });
+				setAgoraToken(token);
+
+				// Join Agora channel
+				const joinResult = await join(token);
+				if (joinResult === false) {
+					throw new Error('Failed to join Agora channel');
+				}
+
+				setIsJoining(false);
+				console.log('Successfully joined NFT ticket room');
+			} catch (error) {
+				console.error('Failed to join NFT room:', error);
+				alert('ルームへの参加に失敗しました');
+				setIsJoining(false);
+			}
+			return;
+		}
+
+		// For payment channel mode, handle channel creation
+		await handlePaymentChannelCreation();
 	};
 
 	const handlePaymentChannelCreation = async () => {
@@ -1215,6 +1305,52 @@ export default function RoomPage() {
 		);
 	}
 
+	// Check NFT ticket access for non-hosts
+	if (room.paymentMode === 'NFT_TICKET' && !isHost && hasNFTAccess === false) {
+		return (
+			<NFTTicketPurchase
+				roomId={roomId}
+				roomTitle={room.title}
+				ticketPrice={room.nftTicketPrice || 1}
+				ticketImageUrl={room.nftTicketImageUrl || undefined}
+				onPurchaseComplete={async () => {
+					console.log('NFT Purchase completed, refetching access...');
+					// Reset checking state and refetch
+					setIsCheckingNFTAccess(true);
+					setHasNFTAccess(null);
+					// Refetch access and room data
+					await Promise.all([
+						refetchNFTAccess(),
+						refetchRoom()
+					]);
+					console.log('Refetch completed');
+				}}
+			/>
+		);
+	}
+
+	// Still checking NFT access - only show if hasNFTAccess is not determined yet
+	if (room.paymentMode === 'NFT_TICKET' && !isHost && hasNFTAccess === null) {
+		console.log('Showing access checking screen:', {
+			paymentMode: room.paymentMode,
+			isHost,
+			isCheckingNFTAccess,
+			hasNFTAccess,
+			nftAccessData,
+			queryEnabled: !!room && room.paymentMode === 'NFT_TICKET' && !!userId
+		});
+		return (
+			<main className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#1a1b3a] to-[#0f0f23] text-white">
+				<div className="text-center">
+					<p>アクセス権を確認中...</p>
+					<p className="mt-2 text-sm text-gray-400">
+						{isCheckingNFTAccess ? 'チェック中' : 'データ待機中'}
+					</p>
+				</div>
+			</main>
+		);
+	}
+
 	console.log('Render state:', {
 		isCreatingChannel,
 		isAddingDeposit,
@@ -1277,7 +1413,7 @@ export default function RoomPage() {
 														? 'ルームはまだ開始されていません'
 														: 'ルームに参加しますか？'}
 												</p>
-												{!isHost && room.xrpPerMinute && room.xrpPerMinute > 0 && (
+												{!isHost && room.paymentMode !== 'NFT_TICKET' && room.xrpPerMinute && room.xrpPerMinute > 0 && (
 													<div className="mb-4 rounded-lg bg-yellow-900/50 p-4">
 														<p className="mb-2 text-sm text-yellow-300">
 															このルームは有料です（{room.xrpPerMinute} XRP/分）
@@ -1520,15 +1656,16 @@ export default function RoomPage() {
 																userId,
 																roomStatus: room.status,
 															});
-															handleJoinRoom();
+															handleJoinRoomWithPayment();
 														}}
 														disabled={
 															!!(
 																isJoining ||
-																isLoadingChannel ||
+																(room.paymentMode !== 'NFT_TICKET' && isLoadingChannel) ||
 																hostInRoomState === false ||
 																(room.status === 'WAITING' && !isHost) ||
 																(!isHost &&
+																	room.paymentMode !== 'NFT_TICKET' &&
 																	room.xrpPerMinute > 0 &&
 																	myChannel &&
 																	Math.floor(
@@ -1560,7 +1697,7 @@ export default function RoomPage() {
 															🔄 ホストがルームに入るまでお待ちください
 														</p>
 													)}
-													{!isHost && room.xrpPerMinute > 0 && (
+													{!isHost && room.paymentMode !== 'NFT_TICKET' && room.xrpPerMinute > 0 && (
 														<>
 															{!myChannel && (
 																<p className="mt-2 text-center text-sm text-yellow-300">
@@ -1647,25 +1784,28 @@ export default function RoomPage() {
 												/>
 											)}
 
-											<PaymentStatusDisplay
-												myChannel={myChannel}
-												paymentChannelId={paymentChannelId}
-												totalPaidSeconds={totalPaidSeconds}
-												room={room}
-												incomingChannels={incomingChannels}
-												isHost={isHost}
-												depositAmountXRP={depositAmountXRP}
-												isAddingDeposit={isAddingDeposit}
-												isRemoteAudioPaused={isRemoteAudioPaused}
-												onAddDeposit={() => {
-													const defaultDeposit = Math.max(
-														10,
-														room.xrpPerMinute ? room.xrpPerMinute * 30 : 10,
-													);
-													setDepositAmountXRP(defaultDeposit);
-													setIsAddingDeposit(true);
-												}}
-											/>
+											{/* NFTチケットモード以外の場合のみペイメントステータスを表示 */}
+											{room.paymentMode !== 'NFT_TICKET' && (
+												<PaymentStatusDisplay
+													myChannel={myChannel}
+													paymentChannelId={paymentChannelId}
+													totalPaidSeconds={totalPaidSeconds}
+													room={room}
+													incomingChannels={incomingChannels}
+													isHost={isHost}
+													depositAmountXRP={depositAmountXRP}
+													isAddingDeposit={isAddingDeposit}
+													isRemoteAudioPaused={isRemoteAudioPaused}
+													onAddDeposit={() => {
+														const defaultDeposit = Math.max(
+															10,
+															room.xrpPerMinute ? room.xrpPerMinute * 30 : 10,
+														);
+														setDepositAmountXRP(defaultDeposit);
+														setIsAddingDeposit(true);
+													}}
+												/>
+											)}
 										</div>
 									</div>
 								)}

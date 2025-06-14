@@ -8,6 +8,9 @@ export interface RoomData {
 	xrpPerMinute: number;
 	creatorId: string;
 	agoraChannelName: string;
+	paymentMode: 'PAYMENT_CHANNEL' | 'NFT_TICKET';
+	nftTicketPrice?: number | null;
+	nftTicketImageUrl?: string | null;
 	creator: {
 		nickname?: string | null;
 		walletAddress: string;

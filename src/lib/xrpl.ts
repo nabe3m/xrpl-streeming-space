@@ -29,7 +29,16 @@ export async function getSignatureWallet(): Promise<Wallet> {
 	if (!env.XRPL_SIGNATURE_SECRET) {
 		throw new Error('XRPL_SIGNATURE_SECRET is not configured');
 	}
-	return Wallet.fromSecret(env.XRPL_SIGNATURE_SECRET);
+	const wallet = Wallet.fromSecret(env.XRPL_SIGNATURE_SECRET);
+	
+	// デバッグ: 環境変数のアドレスと実際のウォレットアドレスを比較
+	if (env.XRPL_SIGNATURE_ADDRESS && wallet.address !== env.XRPL_SIGNATURE_ADDRESS) {
+		console.warn('⚠️ Signature wallet address mismatch!');
+		console.warn('Expected (from env):', env.XRPL_SIGNATURE_ADDRESS);
+		console.warn('Actual (from secret):', wallet.address);
+	}
+	
+	return wallet;
 }
 
 export interface PaymentChannelCreationParams {

@@ -51,7 +51,8 @@ export default function RoomsPage() {
 			router.push('/auth/signin');
 			return;
 		}
-		setShowCreateModal(true);
+		// Navigate to create room page instead of showing modal
+		router.push('/rooms/create');
 	};
 
 	const handleSubmit = (e: React.FormEvent) => {

@@ -24,9 +24,12 @@ export const authRouter = createTRPCRouter({
 		)
 		.mutation(async ({ ctx, input }) => {
 			try {
+				console.log('Verifying sign-in for UUID:', input.uuid);
 				const status = await getPayloadStatus(input.uuid);
+				console.log('Payload status:', status);
 
 				if (!status.signed || !status.walletAddress) {
+					console.log('Payload not signed or missing wallet address');
 					return { user: null };
 				}
 
@@ -35,6 +38,7 @@ export const authRouter = createTRPCRouter({
 				});
 
 				if (!user) {
+					console.log('Creating new user for wallet:', status.walletAddress);
 					user = await ctx.db.user.create({
 						data: {
 							walletAddress: status.walletAddress,
@@ -51,9 +55,17 @@ export const authRouter = createTRPCRouter({
 					},
 				};
 			} catch (error) {
+				console.error('Error in verifySignIn:', error);
+				if (error instanceof Error) {
+					console.error('Error details:', {
+						name: error.name,
+						message: error.message,
+						stack: error.stack,
+					});
+				}
 				throw new TRPCError({
 					code: 'INTERNAL_SERVER_ERROR',
-					message: 'Failed to verify sign-in',
+					message: error instanceof Error ? error.message : 'Failed to verify sign-in',
 				});
 			}
 		}),

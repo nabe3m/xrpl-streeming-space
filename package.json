@@ -17,6 +17,7 @@
 		"preview": "next build && next start",
 		"start": "next start",
 		"test:wallet": "node test-wallet.js",
+		"test:mint": "tsx test-mint-nft.ts",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
@@ -40,12 +41,14 @@
 	"devDependencies": {
 		"@biomejs/biome": "1.9.4",
 		"@tailwindcss/postcss": "^4.0.15",
-		"@types/node": "^20.14.10",
+		"@types/node": "^20.19.0",
 		"@types/react": "^19.0.0",
 		"@types/react-dom": "^19.0.0",
+		"dotenv": "^16.5.0",
 		"postcss": "^8.5.3",
 		"prisma": "^6.5.0",
 		"tailwindcss": "^4.0.15",
+		"tsx": "^4.20.3",
 		"typescript": "^5.8.2"
 	},
 	"ct3aMetadata": {
