@@ -1,29 +1,68 @@
-# Create T3 App
+# XRP Spaces
 
-This is a [T3 Stack](https://create.t3.gg/) project bootstrapped with `create-t3-app`.
+XRP Spacesは、XRP Ledgerを活用した音声配信プラットフォームです。リアルタイムの音声通話と、XRPLのPayment Channelを使用した即時決済を組み合わせています。
 
-## What's next? How do I make an app with this?
+## 主な機能
 
-We try to keep this project as simple as possible, so you can start with just the scaffolding we set up for you, and add additional things later when they become necessary.
+- 🎙️ リアルタイム音声配信ルーム
+- 💸 XRPLペイメントチャネルによる分単位の課金
+- 🎫 NFTによる入室制限機能
+- 🔐 Xamanウォレット認証
+- 📊 ダッシュボードでの収支管理
 
-If you are not familiar with the different technologies used in this project, please refer to the respective docs. If you still are in the wind, please join our [Discord](https://t3.gg/discord) and ask for help.
+## 技術スタック
 
-- [Next.js](https://nextjs.org)
-- [NextAuth.js](https://next-auth.js.org)
-- [Prisma](https://prisma.io)
-- [Drizzle](https://orm.drizzle.team)
-- [Tailwind CSS](https://tailwindcss.com)
-- [tRPC](https://trpc.io)
+- **Frontend**: Next.js, React, TypeScript
+- **Backend**: tRPC, Prisma
+- **Database**: SQLite (開発環境)
+- **Blockchain**: XRP Ledger
+- **認証**: Xaman Wallet (旧Xumm)
+- **音声通話**: Agora RTC
+- **スタイリング**: Tailwind CSS
 
-## Learn More
+## セットアップ
 
-To learn more about the [T3 Stack](https://create.t3.gg/), take a look at the following resources:
+1. 依存関係のインストール
+```bash
+npm install
+```
 
-- [Documentation](https://create.t3.gg/)
-- [Learn the T3 Stack](https://create.t3.gg/en/faq#what-learning-resources-are-currently-available) — Check out these awesome tutorials
+2. 環境変数の設定
+`.env`ファイルを作成し、以下の変数を設定してください：
 
-You can check out the [create-t3-app GitHub repository](https://github.com/t3-oss/create-t3-app) — your feedback and contributions are welcome!
+```env
+DATABASE_URL="file:./db.sqlite"
+XRPL_NETWORK="wss://s.altnet.rippletest.net:51233"
+XRPL_SIGNATURE_SECRET="your_signature_secret"
+XUMM_API_KEY="your_xumm_api_key"
+XUMM_API_SECRET="your_xumm_api_secret"
+AGORA_APP_ID="your_agora_app_id"
+AGORA_APP_CERTIFICATE="your_agora_certificate"
+NEXT_PUBLIC_XRPL_NETWORK="wss://s.altnet.rippletest.net:51233"
+NEXT_PUBLIC_AGORA_APP_ID="your_agora_app_id"
+NEXT_PUBLIC_XUMM_API_KEY="your_xumm_api_key"
+```
 
-## How do I deploy this?
+3. データベースのセットアップ
+```bash
+npx prisma db push
+```
 
-Follow our deployment guides for [Vercel](https://create.t3.gg/en/deployment/vercel), [Netlify](https://create.t3.gg/en/deployment/netlify) and [Docker](https://create.t3.gg/en/deployment/docker) for more information.
+4. 開発サーバーの起動
+```bash
+npm run dev
+```
+
+## 使い方
+
+1. Xamanウォレットでサインイン
+2. ルームを作成または参加
+3. リスナーはペイメントチャネルを作成
+4. ホストは配信を開始
+5. リスナーは配信を視聴
+6. ホストは配信を終了
+7. ダッシュボードで請求を確認
+
+## ライセンス
+
+Copyright (c) 2025 Nabe3. All rights reserved.

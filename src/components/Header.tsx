@@ -7,7 +7,7 @@ export function Header() {
 			<div className="container mx-auto px-4">
 				<nav className="flex items-center justify-between py-4">
 					<Link href="/" className="font-bold text-xl">
-						XRPL Clubhouse
+						XRP Spaces
 					</Link>
 					<HeaderNav />
 				</nav>

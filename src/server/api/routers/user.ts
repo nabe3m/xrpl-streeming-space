@@ -128,7 +128,15 @@ export const userRouter = createTRPCRouter({
 		)
 		.query(async ({ ctx, input }) => {
 			const participations = await ctx.db.roomParticipant.findMany({
-				where: { userId: ctx.session.userId },
+				where: { 
+					userId: ctx.session.userId,
+					// Exclude rooms where the user is the host
+					room: {
+						creatorId: {
+							not: ctx.session.userId
+						}
+					}
+				},
 				take: input.limit + 1,
 				cursor: input.cursor ? { id: input.cursor } : undefined,
 				orderBy: { joinedAt: 'desc' },

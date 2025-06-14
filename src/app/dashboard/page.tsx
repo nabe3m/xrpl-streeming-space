@@ -180,12 +180,14 @@ export default function DashboardPage() {
 											</p>
 										</div>
 										<div className="flex gap-2">
-											<Link
-												href={`/rooms/${room.id}`}
-												className="rounded bg-blue-600 px-4 py-2 font-semibold text-sm transition hover:bg-blue-700"
-											>
-												詳細
-											</Link>
+											{room.status !== 'ENDED' && (
+												<Link
+													href={`/rooms/${room.id}`}
+													className="rounded bg-blue-600 px-4 py-2 font-semibold text-sm transition hover:bg-blue-700"
+												>
+													ルームへ
+												</Link>
+											)}
 											{room.status === 'ENDED' && room._count.participants > 0 && (
 												<>
 													<Link

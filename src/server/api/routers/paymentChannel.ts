@@ -268,6 +268,7 @@ export const paymentChannelRouter = createTRPCRouter({
 					});
 				}
 
+				// Update payment channel
 				await ctx.db.paymentChannel.update({
 					where: { channelId: input.channelId },
 					data: {
@@ -275,6 +276,32 @@ export const paymentChannelRouter = createTRPCRouter({
 						lastAmount: payment.amount,
 					},
 				});
+
+				// Update total paid amount in room participant record
+				const paymentChannel = await ctx.db.paymentChannel.findUnique({
+					where: { channelId: input.channelId },
+					include: { room: true },
+				});
+
+				if (paymentChannel) {
+					// Calculate the increment amount (current payment - previous payment)
+					const previousAmount = channel.lastAmount ? Number(dropsToXrp(channel.lastAmount)) : 0;
+					const currentAmount = Number(dropsToXrp(payment.amount));
+					const incrementAmount = currentAmount - previousAmount;
+
+					// Update the participant's total paid amount
+					await ctx.db.roomParticipant.updateMany({
+						where: {
+							roomId: paymentChannel.roomId,
+							userId: ctx.session.userId,
+						},
+						data: {
+							totalPaidXrp: {
+								increment: incrementAmount,
+							},
+						},
+					});
+				}
 
 				return payment;
 			} catch (error) {

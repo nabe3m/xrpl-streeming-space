@@ -8,7 +8,7 @@ import { AuthProvider } from '~/contexts/AuthContext';
 import { TRPCReactProvider } from '~/trpc/react';
 
 export const metadata: Metadata = {
-	title: 'XRPL Clubhouse',
+	title: 'XRP Spaces',
 	description: 'XRPLベースの音声配信プラットフォーム',
 	icons: [{ rel: 'icon', url: '/favicon.ico' }],
 };
