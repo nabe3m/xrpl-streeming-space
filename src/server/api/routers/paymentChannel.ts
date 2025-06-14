@@ -5,6 +5,7 @@ import {
 	createPaymentChannelClaimTransaction,
 	createPaymentChannelTransaction,
 	getPaymentChannelsBetweenAddresses,
+	getPaymentChannelInfo,
 	getSignatureWallet,
 	signOffLedgerPayment,
 	verifyOffLedgerPayment,
@@ -199,54 +200,62 @@ export const paymentChannelRouter = createTRPCRouter({
 			}
 
 			try {
-				// Check channel balance first
-				const depositAmount = BigInt(channel.amount);
-				const requestedAmount = BigInt(xrpToDrops(input.amountXRP));
+				// Get channel info from ledger to get the actual claimed amount
+				const channelInfo = await getPaymentChannelInfo(channel.channelId);
+				if (!channelInfo) {
+					throw new TRPCError({
+						code: 'NOT_FOUND',
+						message: 'Payment channel not found on ledger',
+					});
+				}
+
+				// Use ledger deposit amount for more accurate calculation
+				const depositAmount = BigInt(channelInfo.amount);
+				const alreadyClaimed = BigInt(channelInfo.balance);
+				const incrementalAmountDrops = BigInt(xrpToDrops(input.amountXRP)); // This is the NEW payment amount (e.g., per minute)
 				
-				// Check if requested amount exceeds deposit
-				if (requestedAmount > depositAmount) {
-					console.error('Requested amount exceeds channel deposit:', {
-						requestedXRP: input.amountXRP,
-						depositXRP: Number(dropsToXrp(channel.amount)),
+				// Calculate the cumulative amount based on the last signed amount or claimed amount
+				const lastSignedAmount = channel.lastAmount ? BigInt(channel.lastAmount) : alreadyClaimed;
+				const cumulativeAmount = lastSignedAmount + incrementalAmountDrops;
+				const availableAmount = depositAmount - alreadyClaimed;
+				
+				console.log('💰 Payment channel balance check:', {
+					depositAmount: dropsToXrp(depositAmount.toString()),
+					alreadyClaimed: dropsToXrp(alreadyClaimed.toString()),
+					lastSignedAmount: dropsToXrp(lastSignedAmount.toString()),
+					incrementalAmount: dropsToXrp(incrementalAmountDrops.toString()),
+					cumulativeAmount: dropsToXrp(cumulativeAmount.toString()),
+					availableAmount: dropsToXrp(availableAmount.toString()),
+					dbAmount: dropsToXrp(channel.amount),
+					dbLastAmount: channel.lastAmount ? dropsToXrp(channel.lastAmount) : '0',
+				});
+
+				// Check if cumulative amount exceeds available balance (deposit)
+				if (cumulativeAmount > depositAmount) {
+					console.error('Cumulative amount exceeds deposit:', {
+						incrementalXRP: input.amountXRP,
+						cumulativeXRP: Number(dropsToXrp(cumulativeAmount.toString())),
+						depositXRP: Number(dropsToXrp(depositAmount.toString())),
+						claimedXRP: Number(dropsToXrp(alreadyClaimed.toString())),
+						availableXRP: Number(dropsToXrp(availableAmount.toString())),
 					});
 					throw new TRPCError({
 						code: 'BAD_REQUEST',
-						message: `残高不足: チャネルのデポジット額 (${Number(dropsToXrp(channel.amount))} XRP) を超える金額をリクエストしています`,
+						message: `残高不足: 累計額 (${Number(dropsToXrp(cumulativeAmount.toString()))} XRP) がデポジット額 (${Number(dropsToXrp(depositAmount.toString()))} XRP) を超えています。利用可能残高: ${Number(dropsToXrp(availableAmount.toString()))} XRP`,
+					});
+				}
+				
+				// Ensure the incremental amount is positive
+				if (incrementalAmountDrops <= 0n) {
+					throw new TRPCError({
+						code: 'BAD_REQUEST',
+						message: `Payment amount must be positive. Requested: ${input.amountXRP} XRP`,
 					});
 				}
 
-				// Check if there's a previous signed amount
-				if (channel.lastAmount) {
-					// Convert drops to XRP for comparison
-					const lastAmountXRP = Number(dropsToXrp(channel.lastAmount));
-
-					// Ensure the new amount is greater than the last signed amount
-					if (input.amountXRP <= lastAmountXRP) {
-						console.error('New amount must be greater than last signed amount:', {
-							newAmount: input.amountXRP,
-							lastAmount: lastAmountXRP,
-						});
-						
-						// Calculate remaining balance
-						const remainingBalance = depositAmount - BigInt(channel.lastAmount);
-						const remainingXRP = Number(dropsToXrp(remainingBalance.toString()));
-						
-						// If there's no remaining balance, provide a more helpful error message
-						if (remainingBalance <= 0n) {
-							throw new TRPCError({
-								code: 'BAD_REQUEST',
-								message: `残高不足: チャネルの残高が0です。デポジットを追加してください。`,
-							});
-						} else {
-							throw new TRPCError({
-								code: 'BAD_REQUEST',
-								message: `Amount must be greater than last signed amount (${lastAmountXRP} XRP). 残り残高: ${remainingXRP} XRP`,
-							});
-						}
-					}
-				}
-
-				const payment = await signOffLedgerPayment(input.channelId, input.amountXRP);
+				// Sign the cumulative amount (already claimed + new payment)
+				const cumulativeAmountXRP = Number(dropsToXrp(cumulativeAmount.toString()));
+				const payment = await signOffLedgerPayment(input.channelId, cumulativeAmountXRP);
 
 				console.log('🚀 🚀 🚀 🚀 🚀 payment', payment.amount);
 
@@ -254,7 +263,7 @@ export const paymentChannelRouter = createTRPCRouter({
 
 				const isValid = await verifyOffLedgerPayment(
 					payment.channelId, // Use the normalized channel ID from payment
-					input.amountXRP,
+					cumulativeAmountXRP,
 					payment.signature,
 					signatureWallet.publicKey,
 				);
@@ -284,10 +293,17 @@ export const paymentChannelRouter = createTRPCRouter({
 				});
 
 				if (paymentChannel) {
-					// Calculate the increment amount (current payment - previous payment)
-					const previousAmount = channel.lastAmount ? Number(dropsToXrp(channel.lastAmount)) : 0;
-					const currentAmount = Number(dropsToXrp(payment.amount));
-					const incrementAmount = currentAmount - previousAmount;
+					// Calculate the increment amount (current cumulative - previous cumulative)
+					const previousCumulativeAmount = channel.lastAmount ? Number(dropsToXrp(channel.lastAmount)) : Number(dropsToXrp(alreadyClaimed.toString()));
+					const currentCumulativeAmount = Number(dropsToXrp(payment.amount));
+					const incrementAmount = currentCumulativeAmount - previousCumulativeAmount;
+
+					console.log('💳 Payment increment calculation:', {
+						previousCumulative: previousCumulativeAmount,
+						currentCumulative: currentCumulativeAmount,
+						increment: incrementAmount,
+						requestedPayment: input.amountXRP,
+					});
 
 					// Update the participant's total paid amount
 					await ctx.db.roomParticipant.updateMany({
@@ -566,6 +582,15 @@ export const paymentChannelRouter = createTRPCRouter({
 			}
 
 			try {
+				// Get channel info from ledger first
+				const channelInfo = await getPaymentChannelInfo(channel.channelId);
+				if (!channelInfo) {
+					throw new TRPCError({
+						code: 'NOT_FOUND',
+						message: 'Payment channel not found on ledger',
+					});
+				}
+
 				// Log the exact values being used for the claim
 				console.log('🔍 Claim parameters:', {
 					channelId: channel.channelId,
@@ -573,7 +598,24 @@ export const paymentChannelRouter = createTRPCRouter({
 					lastSignature: channel.lastSignature?.substring(0, 20) + '...',
 					publicKeyFromDB: channel.publicKey,
 					receiverAddress: channel.receiver.walletAddress,
+					ledgerInfo: {
+						depositAmount: dropsToXrp(channelInfo.amount),
+						claimedAmount: dropsToXrp(channelInfo.balance),
+						availableAmount: dropsToXrp((BigInt(channelInfo.amount) - BigInt(channelInfo.balance)).toString()),
+					},
 				});
+				
+				// Check if there's actually anything to claim
+				const depositAmount = BigInt(channelInfo.amount);
+				const alreadyClaimed = BigInt(channelInfo.balance);
+				const signedAmount = BigInt(channel.lastAmount);
+				
+				if (signedAmount <= alreadyClaimed) {
+					throw new TRPCError({
+						code: 'BAD_REQUEST',
+						message: `Nothing to claim. Signed amount (${dropsToXrp(signedAmount.toString())} XRP) is less than or equal to already claimed amount (${dropsToXrp(alreadyClaimed.toString())} XRP)`,
+					});
+				}
 				
 				// Get signature wallet to compare public keys
 				const signatureWallet = await getSignatureWallet();
@@ -595,8 +637,8 @@ export const paymentChannelRouter = createTRPCRouter({
 				console.log('Created claim transaction:', JSON.stringify(transaction, null, 2));
 				
 				// Validate transaction before sending to Xumm
-				if (!transaction.Account || !transaction.Channel || !transaction.Amount) {
-					throw new Error(`Invalid transaction: missing required fields - Account: ${transaction.Account}, Channel: ${transaction.Channel}, Amount: ${transaction.Amount}`);
+				if (!transaction.Account || !transaction.Channel || !transaction.Balance) {
+					throw new Error(`Invalid transaction: missing required fields - Account: ${transaction.Account}, Channel: ${transaction.Channel}, Balance: ${transaction.Balance}`);
 				}
 
 				try {
@@ -766,6 +808,22 @@ export const paymentChannelRouter = createTRPCRouter({
 					});
 
 					if (user) {
+						// Get channel info from ledger to check if there's anything to claim
+						const channelInfo = await getPaymentChannelInfo(channel.channelId);
+						if (!channelInfo) {
+							console.log(`Channel ${channel.channelId} not found on ledger, skipping`);
+							continue;
+						}
+
+						// Check if there's actually anything to claim
+						const alreadyClaimed = BigInt(channelInfo.balance);
+						const signedAmount = BigInt(channel.lastAmount);
+						
+						if (signedAmount <= alreadyClaimed) {
+							console.log(`Channel ${channel.channelId}: Nothing to claim (signed: ${dropsToXrp(signedAmount.toString())}, claimed: ${dropsToXrp(alreadyClaimed.toString())})`);
+							continue;
+						}
+
 						const transaction = await createPaymentChannelClaimTransaction({
 							channelId: channel.channelId,
 							balance: channel.lastAmount,
@@ -813,6 +871,68 @@ export const paymentChannelRouter = createTRPCRouter({
 			],
 		});
 
-		return channels;
+		// Check each channel's existence on XRPL and clean up closed channels
+		const { checkChannelExists } = await import('~/lib/xrpl');
+		const activeChannels = [];
+		
+		for (const channel of channels) {
+			try {
+				const exists = await checkChannelExists(channel.channelId);
+				if (!exists) {
+					// Channel no longer exists on XRPL, delete from database
+					console.log('🧹 Cleaning up closed channel:', channel.channelId);
+					await ctx.db.paymentChannel.delete({
+						where: { channelId: channel.channelId },
+					});
+				} else {
+					activeChannels.push(channel);
+				}
+			} catch (error) {
+				console.error('Error checking channel:', channel.channelId, error);
+				// Keep the channel if we can't verify its status
+				activeChannels.push(channel);
+			}
+		}
+
+		return activeChannels;
 	}),
+
+	confirmClaimAndReset: protectedProcedure
+		.input(
+			z.object({
+				channelId: z.string(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const channel = await ctx.db.paymentChannel.findUnique({
+				where: { channelId: input.channelId },
+			});
+
+			if (!channel) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Payment channel not found',
+				});
+			}
+
+			if (channel.receiverId !== ctx.session.userId) {
+				throw new TRPCError({
+					code: 'FORBIDDEN',
+					message: 'Only receiver can confirm claim',
+				});
+			}
+
+			// Reset lastSignature and lastAmount after successful claim
+			await ctx.db.paymentChannel.update({
+				where: { channelId: input.channelId },
+				data: {
+					lastSignature: null,
+					lastAmount: null,
+				},
+			});
+
+			console.log('✅ Payment channel lastSignature and lastAmount reset after successful claim:', input.channelId);
+
+			return { success: true };
+		}),
 });

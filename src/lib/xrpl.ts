@@ -151,21 +151,40 @@ export interface PaymentChannelClaimParams {
 }
 
 export async function createPaymentChannelClaimTransaction(params: PaymentChannelClaimParams) {
-	// Ensure all amounts are in drops (strings)
-	const balanceDrops = params.balance.toString();
-	const amountDrops = params.amount.toString();
-	
 	// Ensure channel ID is uppercase
 	const normalizedChannelId = params.channelId.toUpperCase();
 	
-	console.log('📝 Creating claim transaction with params:', {
+	// Get channel info from ledger to determine actual claimable amount
+	const channelInfo = await getPaymentChannelInfo(normalizedChannelId);
+	if (!channelInfo) {
+		throw new Error(`Payment channel ${normalizedChannelId} not found on ledger`);
+	}
+	
+	// Calculate the actual claimable amount
+	const depositAmount = BigInt(channelInfo.amount);
+	const claimedAmount = BigInt(channelInfo.balance);
+	const requestedAmount = BigInt(params.balance);
+	
+	// The actual amount we can claim is the minimum of:
+	// 1. What was requested (based on signature)
+	// 2. What's actually available (deposit - already claimed)
+	const availableAmount = depositAmount - claimedAmount;
+	const actualClaimAmount = requestedAmount <= depositAmount ? requestedAmount : depositAmount;
+	
+	// For the Balance field in the claim, we need to specify the total cumulative amount
+	// that will have been claimed after this transaction (not the delta)
+	const newTotalClaimed = claimedAmount + (actualClaimAmount - claimedAmount);
+	const balanceDrops = newTotalClaimed.toString();
+	
+	console.log('📝 Creating claim transaction with calculated amounts:', {
 		channelId: normalizedChannelId,
-		channelIdLength: normalizedChannelId.length,
-		balance: balanceDrops,
-		amount: amountDrops,
-		signatureLength: params.signature.length,
-		publicKeyFromDB: params.publicKey,
-		accountAddress: params.accountAddress,
+		depositAmount: dropsToXrp(depositAmount.toString()),
+		alreadyClaimed: dropsToXrp(claimedAmount.toString()),
+		requestedAmount: dropsToXrp(requestedAmount.toString()),
+		availableAmount: dropsToXrp(availableAmount.toString()),
+		actualClaimAmount: dropsToXrp(actualClaimAmount.toString()),
+		newTotalClaimed: dropsToXrp(balanceDrops),
+		deltaAmount: dropsToXrp((actualClaimAmount - claimedAmount).toString()),
 	});
 	
 	// Check if publicKey is in Base58 format (starts with 'a' and has specific length)
@@ -182,11 +201,11 @@ export async function createPaymentChannelClaimTransaction(params: PaymentChanne
 	const transaction = {
 		TransactionType: 'PaymentChannelClaim' as const,
 		Account: params.accountAddress,
-		Channel: normalizedChannelId, // Use normalized channel ID
+		Channel: normalizedChannelId,
 		Balance: balanceDrops,
-		Amount: amountDrops,
-		Signature: params.signature.toUpperCase(), // Ensure signature is uppercase
-		PublicKey: publicKeyHex.toUpperCase(), // Ensure public key is uppercase hex
+		// Amount field is omitted - XRPL will automatically claim the difference
+		Signature: params.signature.toUpperCase(),
+		PublicKey: publicKeyHex.toUpperCase(),
 	};
 	
 	console.log('Creating PaymentChannelClaim transaction:', JSON.stringify(transaction, null, 2));
@@ -194,10 +213,10 @@ export async function createPaymentChannelClaimTransaction(params: PaymentChanne
 	// Verify signature locally before sending
 	try {
 		const isValid = await verifyOffLedgerPayment(
-			normalizedChannelId, // Use normalized channel ID
-			Number(dropsToXrp(amountDrops)),
+			normalizedChannelId,
+			Number(dropsToXrp(params.balance)), // Verify against the original signed amount
 			params.signature,
-			publicKeyHex // verifyOffLedgerPayment will handle uppercase conversion
+			publicKeyHex
 		);
 		console.log('🔍 Local signature verification:', isValid ? '✅ VALID' : '❌ INVALID');
 		
@@ -205,7 +224,7 @@ export async function createPaymentChannelClaimTransaction(params: PaymentChanne
 			console.error('⚠️ WARNING: Signature verification failed locally. This may cause tecBAD_SIGNATURE on ledger.');
 			console.error('Debug info:', {
 				channelId: normalizedChannelId,
-				amount: amountDrops,
+				signedAmount: params.balance,
 				signatureFirst20: params.signature.substring(0, 20),
 				publicKeyFirst20: publicKeyHex.substring(0, 20),
 			});
@@ -325,4 +344,89 @@ export function calculateXRPPerSecond(xrpPerMinute: number): number {
 
 export function calculateTotalXRP(seconds: number, xrpPerMinute: number): number {
 	return (seconds / 60) * xrpPerMinute;
+}
+
+export async function checkChannelExists(channelId: string): Promise<boolean> {
+	const client = await getXRPLClient();
+	
+	try {
+		const response = await client.request({
+			command: 'ledger_entry',
+			index: channelId.toUpperCase(),
+		});
+		
+		// If the channel exists, it will return the ledger entry
+		return !!response.result.node;
+	} catch (error: any) {
+		// If the channel doesn't exist, it will throw an error with 'entryNotFound'
+		if (error?.data?.error === 'entryNotFound') {
+			console.log('Channel not found on ledger:', channelId);
+			return false;
+		}
+		console.error('Error checking channel existence:', error);
+		throw error;
+	}
+}
+
+export interface PaymentChannelInfo {
+	channelId: string;
+	account: string;
+	destination: string;
+	amount: string; // Total deposit amount in drops
+	balance: string; // Total claimed amount in drops
+	publicKey: string;
+	settleDelay: number;
+	expiration?: number;
+	cancelAfter?: number;
+	sourceTag?: number;
+	destinationTag?: number;
+}
+
+export async function getPaymentChannelInfo(channelId: string): Promise<PaymentChannelInfo | null> {
+	const client = await getXRPLClient();
+	
+	try {
+		const response = await client.request({
+			command: 'ledger_entry',
+			index: channelId.toUpperCase(),
+		});
+		
+		if (!response.result.node) {
+			return null;
+		}
+		
+		const node = response.result.node as any;
+		console.log('Payment Channel ledger entry:', JSON.stringify(node, null, 2));
+		
+		// Extract payment channel data
+		const channelData: PaymentChannelInfo = {
+			channelId: channelId.toUpperCase(),
+			account: node.Account,
+			destination: node.Destination,
+			amount: node.Amount, // Total deposit
+			balance: node.Balance || '0', // Total claimed (defaults to 0 if not present)
+			publicKey: node.PublicKey,
+			settleDelay: node.SettleDelay,
+			expiration: node.Expiration,
+			cancelAfter: node.CancelAfter,
+			sourceTag: node.SourceTag,
+			destinationTag: node.DestinationTag,
+		};
+		
+		console.log('Parsed channel info:', {
+			channelId: channelData.channelId,
+			depositAmount: dropsToXrp(channelData.amount),
+			claimedAmount: dropsToXrp(channelData.balance),
+			remainingAmount: dropsToXrp((BigInt(channelData.amount) - BigInt(channelData.balance)).toString()),
+		});
+		
+		return channelData;
+	} catch (error: any) {
+		if (error?.data?.error === 'entryNotFound') {
+			console.log('Channel not found on ledger:', channelId);
+			return null;
+		}
+		console.error('Error getting channel info:', error);
+		throw error;
+	}
 }

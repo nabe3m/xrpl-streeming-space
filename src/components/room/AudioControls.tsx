@@ -20,6 +20,8 @@ export function AudioControls({
 	// Calculate if the user has sufficient balance for speaking
 	const hasSufficientBalance = () => {
 		if (shouldBeHost || !room || room.xrpPerMinute === 0) return true;
+		// In NFT mode, no payment channel is needed
+		if (room.paymentMode === 'NFT_TICKET') return true;
 		if (!myChannel) return false;
 		
 		try {

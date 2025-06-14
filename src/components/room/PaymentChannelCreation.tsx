@@ -39,8 +39,8 @@ export function PaymentChannelCreation({
 							onChange={(e) =>
 								onAmountChange(Math.max(0.1, Number.parseFloat(e.target.value) || 0))
 							}
-							min="0.1"
-							step="1"
+							min="0.0000001"
+							step="0.000001"
 							className="flex-1 rounded bg-white/10 px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
 						/>
 						<span className="text-gray-400">XRP</span>

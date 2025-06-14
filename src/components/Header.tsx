@@ -7,7 +7,7 @@ export function Header() {
 			<div className="container mx-auto px-4">
 				<nav className="flex items-center justify-between py-4">
 					<Link href="/" className="font-bold text-xl">
-						XRP Spaces
+						XRP <span className="text-[hsl(200,100%,70%)]">Spaces</span>
 					</Link>
 					<HeaderNav />
 				</nav>

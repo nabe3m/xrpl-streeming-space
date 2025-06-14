@@ -54,6 +54,8 @@ export default function PaymentClaimsPage() {
 	);
 
 	const { mutateAsync: claimChannel } = api.paymentChannel.claimChannel.useMutation();
+	const { mutateAsync: confirmClaimAndReset } = api.paymentChannel.confirmClaimAndReset.useMutation();
+	const { mutateAsync: getPayloadResult } = api.xumm.getPayloadResult.useMutation();
 
 	// Group channels by sender
 	const groupedChannels: ChannelGroup[] = channels
@@ -135,6 +137,14 @@ export default function PaymentClaimsPage() {
 						}, 2000);
 					});
 					
+					// Reset lastSignature and lastAmount after claim
+					try {
+						await confirmClaimAndReset({ channelId });
+						console.log('✅ Channel reset after claim');
+					} catch (error) {
+						console.error('Failed to reset channel:', error);
+					}
+					
 					// Refetch to check if claim was successful
 					await refetchChannels();
 				} else if (qrCode) {
@@ -148,6 +158,14 @@ export default function PaymentClaimsPage() {
 							resolve(undefined);
 						}, 2000);
 					});
+					
+					// Reset lastSignature and lastAmount after claim
+					try {
+						await confirmClaimAndReset({ channelId });
+						console.log('✅ Channel reset after claim');
+					} catch (error) {
+						console.error('Failed to reset channel:', error);
+					}
 					
 					await refetchChannels();
 				} else {
@@ -220,6 +238,14 @@ export default function PaymentClaimsPage() {
 							});
 						} else {
 							console.error('Payload structure for channel', channelId, ':', result.payload);
+						}
+						
+						// Reset lastSignature and lastAmount after claim
+						try {
+							await confirmClaimAndReset({ channelId });
+							console.log('✅ Channel reset after claim:', channelId);
+						} catch (error) {
+							console.error('Failed to reset channel:', error);
 						}
 					}
 				} catch (error) {

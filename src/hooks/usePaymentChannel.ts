@@ -175,24 +175,16 @@ export function usePaymentChannel({
 					const actualUsedAmountXRP = Math.max(dbLastAmountXRP, lastSignedAmount);
 					const availableBalanceXRP = totalDepositXRP - actualUsedAmountXRP;
 
-					// 次の支払い額が残高を超える場合は停止
-					// roundedXrpは累積額なので、新規支払い額は roundedXrp - actualUsedAmountXRP
-					const newPaymentAmount = roundedXrp - actualUsedAmountXRP;
-					
-					// より厳密なチェック: 次の署名が不可能な場合も停止
-					// XRPLの仕様により、署名金額は単調増加する必要がある
-					if (newPaymentAmount > availableBalanceXRP || 
-					    roundedXrp > totalDepositXRP ||
-					    roundedXrp <= actualUsedAmountXRP) {
-						console.warn('Payment timer stopped - insufficient balance or invalid amount:', {
-							requestedAmount: roundedXrp,
+					// 次の累積額が総デポジット額を超える場合は停止
+					// roundedXrpは累積額
+					if (roundedXrp > totalDepositXRP) {
+						console.warn('Payment timer stopped - would exceed deposit:', {
+							cumulativeAmount: roundedXrp,
 							totalDeposit: totalDepositXRP,
 							actualUsedAmount: actualUsedAmountXRP,
 							availableBalance: availableBalanceXRP,
-							newPaymentAmount,
 							dbLastAmount: dbLastAmountXRP,
 							localLastSignedAmount: lastSignedAmount,
-							wouldBeValid: roundedXrp > actualUsedAmountXRP,
 						});
 						clearInterval(interval);
 						paymentIntervalRef.current = null;
@@ -219,9 +211,15 @@ export function usePaymentChannel({
 
 				// Only sign if the amount is greater than the last signed amount
 				if (roundedXrp > lastSignedAmount) {
+					// Calculate the incremental payment amount (new total - last signed)
+					const incrementalPayment = roundedXrp - lastSignedAmount;
+					// Round to 6 decimal places to avoid floating point precision issues
+					const roundedIncrementalPayment = Math.round(incrementalPayment * 1000000) / 1000000;
+					
 					console.log('Signing payment:', {
 						channelId,
-						amountXRP: roundedXrp,
+						cumulativeAmountXRP: roundedXrp,
+						incrementalAmountXRP: roundedIncrementalPayment,
 						totalSeconds,
 						xrpPerMinute: room.xrpPerMinute,
 						lastSignedAmount,
@@ -231,7 +229,7 @@ export function usePaymentChannel({
 
 					signPayment({
 						channelId,
-						amountXRP: roundedXrp,
+						amountXRP: roundedIncrementalPayment,  // Send incremental amount, not cumulative
 					});
 				} else {
 					console.log('Skipping payment signature (amount not increased yet):', {

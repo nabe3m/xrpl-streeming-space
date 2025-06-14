@@ -51,9 +51,15 @@ export function PaymentStatusDisplay({
 }: PaymentStatusDisplayProps) {
 	// リスナーの支払い状況表示
 	if (paymentChannelId && room?.xrpPerMinute && room.xrpPerMinute > 0 && myChannel) {
-		const depositAmount = Number(dropsToXrp(myChannel.amount));
-		const usedAmount = (totalPaidSeconds / 60) * (room.xrpPerMinute || 0);
-		const remainingAmount = Math.max(0, depositAmount - usedAmount); // マイナス値を0に制限
+		// Use ledger data if available, otherwise fall back to DB data
+		const depositAmountDrops = BigInt(myChannel.amount);
+		const usedAmountDrops = BigInt(myChannel.lastAmount || '0');
+		
+		// Available balance = deposit - used
+		const availableAmountDrops = depositAmountDrops - usedAmountDrops;
+		
+		const availableAmount = Number(dropsToXrp(availableAmountDrops.toString()));
+		const remainingAmount = Math.max(0, availableAmount); // マイナス値を0に制限
 		const remainingMinutes = Math.max(0, Math.floor(remainingAmount / (room.xrpPerMinute || 0.01))); // マイナス値を0に制限
 
 		return (
