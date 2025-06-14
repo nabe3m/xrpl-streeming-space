@@ -11,9 +11,13 @@
 
 Choose a PostgreSQL provider and create a database. Popular options:
 - **Vercel Postgres**: Integrated with Vercel dashboard
+- **Prisma Accelerate**: Global database cache (recommended for better performance)
 - **Supabase**: Free tier available
 - **Neon**: Serverless PostgreSQL
 - **Railway**: Simple deployment
+
+Note: If using Prisma Accelerate, your DATABASE_URL will look like:
+`prisma://accelerate.prisma-data.net/?api_key=YOUR_API_KEY`
 
 ### 2. Environment Variables
 

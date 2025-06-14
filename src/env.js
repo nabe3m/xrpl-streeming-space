@@ -7,10 +7,7 @@ export const env = createEnv({
 	 * isn't built with invalid env vars.
 	 */
 	server: {
-		DATABASE_URL: z.string().refine((val) => {
-			// Allow file:// URLs for SQLite or proper URLs for PostgreSQL
-			return val.startsWith('file:') || val.startsWith('postgres://') || val.startsWith('postgresql://');
-		}, 'DATABASE_URL must be a valid SQLite file path or PostgreSQL URL'),
+		DATABASE_URL: z.string().min(1),
 		NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 		XRPL_NETWORK: z.string().url(),
 		XRPL_SIGNATURE_SECRET: z.string(),
