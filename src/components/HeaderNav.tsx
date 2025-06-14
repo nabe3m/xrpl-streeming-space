@@ -7,7 +7,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 
 export function HeaderNav() {
 	const router = useRouter();
-	const isMobile = useIsMobile();
+	const { isMobile } = useIsMobile();
 	const [userId, setUserId] = useState<string | null>(null);
 	const [mounted, setMounted] = useState(false);
 	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);

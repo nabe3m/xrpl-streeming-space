@@ -37,11 +37,17 @@ export async function createSignInPayload() {
 	};
 
 	const created = await xumm.payload?.create(payload);
+	
+	console.log('Xumm payload created:', created);
+	console.log('Refs:', created?.refs);
 
+	// Xummの正しいdeeplinkプロパティを使用
+	const deeplinkUrl = created?.next?.always || created?.refs?.deeplink || (created as any)?.deeplink;
+	
 	return {
 		uuid: created?.uuid,
 		qrUrl: created?.refs?.qr_png,
-		deeplink: (created?.refs as any)?.deeplink_url,
+		deeplink: deeplinkUrl,
 		websocketStatus: created?.refs?.websocket_status,
 	};
 }

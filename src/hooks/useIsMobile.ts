@@ -2,12 +2,21 @@ import { useEffect, useState } from 'react';
 
 export function useIsMobile() {
 	const [isMobile, setIsMobile] = useState(false);
+	const [isIOS, setIsIOS] = useState(false);
+	const [isAndroid, setIsAndroid] = useState(false);
 
 	useEffect(() => {
 		const checkIsMobile = () => {
 			// Check if it's a mobile device based on user agent
 			const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
 			const isMobileDevice = mobileRegex.test(navigator.userAgent);
+			
+			// Check specific OS
+			const iosRegex = /iPhone|iPad|iPod/i;
+			const androidRegex = /Android/i;
+			
+			setIsIOS(iosRegex.test(navigator.userAgent));
+			setIsAndroid(androidRegex.test(navigator.userAgent));
 			
 			// Also check screen width
 			const isSmallScreen = window.innerWidth < 768;
@@ -26,5 +35,5 @@ export function useIsMobile() {
 		};
 	}, []);
 
-	return isMobile;
+	return { isMobile, isIOS, isAndroid };
 }

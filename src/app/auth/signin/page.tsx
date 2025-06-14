@@ -8,7 +8,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 
 export default function SignInPage() {
 	const router = useRouter();
-	const isMobile = useIsMobile();
+	const { isMobile } = useIsMobile();
 	const [isLoading, setIsLoading] = useState(false);
 	const [qrUrl, setQrUrl] = useState<string | null>(null);
 	const [payloadUuid, setPayloadUuid] = useState<string | null>(null);
@@ -43,7 +43,10 @@ export default function SignInPage() {
 					setDeeplink(payload.deeplink);
 					// On mobile, automatically open the deeplink
 					if (isMobile) {
-						window.location.href = payload.deeplink;
+						// 少し遅延を入れてからリダイレクト（UXの向上）
+						setTimeout(() => {
+							window.location.href = payload.deeplink;
+						}, 100);
 					}
 				}
 			}
@@ -121,12 +124,37 @@ export default function SignInPage() {
 								</p>
 
 								{deeplink && (
-									<button
-										onClick={() => window.location.href = deeplink}
-										className="rounded-full bg-green-600 px-8 py-3 font-semibold transition hover:bg-green-700"
-									>
-										Xamanアプリを開く
-									</button>
+									<>
+										<button
+											onClick={() => {
+												// 複数の方法でアプリを開くことを試みる
+												const link = document.createElement('a');
+												link.href = deeplink;
+												link.click();
+												
+												// フォールバック
+												setTimeout(() => {
+													window.location.href = deeplink;
+												}, 100);
+											}}
+											className="rounded-full bg-green-600 px-8 py-3 font-semibold transition hover:bg-green-700"
+										>
+											Xamanアプリを開く
+										</button>
+										
+										{/* 手動でコピーできるようにリンクも表示 */}
+										<p className="text-center text-gray-500 text-xs mt-2">
+											または、
+											<a 
+												href={deeplink} 
+												className="text-blue-400 underline"
+												target="_blank"
+												rel="noopener noreferrer"
+											>
+												こちらをタップ
+											</a>
+										</p>
+									</>
 								)}
 
 								<p className="text-center text-gray-400 text-sm">
