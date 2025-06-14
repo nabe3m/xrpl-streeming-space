@@ -7,7 +7,11 @@ export const env = createEnv({
 	 * isn't built with invalid env vars.
 	 */
 	server: {
-		DATABASE_URL: z.string().url(),
+		DATABASE_PROVIDER: z.enum(['sqlite', 'postgresql']),
+		DATABASE_URL: z.string().refine((val) => {
+			// Allow file:// URLs for SQLite or proper URLs for PostgreSQL
+			return val.startsWith('file:') || val.startsWith('postgres://') || val.startsWith('postgresql://');
+		}, 'DATABASE_URL must be a valid SQLite file path or PostgreSQL URL'),
 		NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 		XRPL_NETWORK: z.string().url(),
 		XRPL_SIGNATURE_SECRET: z.string(),
@@ -16,11 +20,6 @@ export const env = createEnv({
 		XUMM_API_SECRET: z.string(),
 		AGORA_APP_ID: z.string(),
 		AGORA_APP_CERTIFICATE: z.string(),
-		NEXTAUTH_SECRET: process.env.NODE_ENV === 'production' ? z.string() : z.string().optional(),
-		NEXTAUTH_URL: z.preprocess(
-			(str) => process.env.VERCEL_URL ?? str,
-			process.env.VERCEL ? z.string() : z.string().url(),
-		),
 		IPFS_API_URL: z.string().optional(),
 		IPFS_API_KEY: z.string().optional(),
 	},
@@ -41,6 +40,7 @@ export const env = createEnv({
 	 * middlewares) or client-side so we need to destruct manually.
 	 */
 	runtimeEnv: {
+		DATABASE_PROVIDER: process.env.DATABASE_PROVIDER,
 		DATABASE_URL: process.env.DATABASE_URL,
 		NODE_ENV: process.env.NODE_ENV,
 		XRPL_NETWORK: process.env.XRPL_NETWORK,
@@ -50,8 +50,6 @@ export const env = createEnv({
 		XUMM_API_SECRET: process.env.XUMM_API_SECRET,
 		AGORA_APP_ID: process.env.AGORA_APP_ID,
 		AGORA_APP_CERTIFICATE: process.env.AGORA_APP_CERTIFICATE,
-		NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
-		NEXTAUTH_URL: process.env.NEXTAUTH_URL,
 		IPFS_API_URL: process.env.IPFS_API_URL,
 		IPFS_API_KEY: process.env.IPFS_API_KEY,
 		NEXT_PUBLIC_XRPL_NETWORK: process.env.NEXT_PUBLIC_XRPL_NETWORK,
