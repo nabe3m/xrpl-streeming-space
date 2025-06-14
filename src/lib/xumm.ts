@@ -42,7 +42,7 @@ export async function createSignInPayload() {
 	console.log('Refs:', created?.refs);
 
 	// Xummの正しいdeeplinkプロパティを使用
-	const deeplinkUrl = created?.next?.always || created?.refs?.deeplink || (created as any)?.deeplink;
+	const deeplinkUrl = created?.next?.always || (created?.refs as any)?.deeplink || (created as any)?.deeplink;
 	
 	return {
 		uuid: created?.uuid,
