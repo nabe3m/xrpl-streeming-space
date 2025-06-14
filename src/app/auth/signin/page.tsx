@@ -4,12 +4,15 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { api } from '~/trpc/react';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 export default function SignInPage() {
 	const router = useRouter();
+	const isMobile = useIsMobile();
 	const [isLoading, setIsLoading] = useState(false);
 	const [qrUrl, setQrUrl] = useState<string | null>(null);
 	const [payloadUuid, setPayloadUuid] = useState<string | null>(null);
+	const [deeplink, setDeeplink] = useState<string | null>(null);
 
 	const { mutateAsync: createSignInPayload } = api.auth.createSignInPayload.useMutation();
 	const { mutateAsync: verifySignIn } = api.auth.verifySignIn.useMutation();
@@ -29,12 +32,19 @@ export default function SignInPage() {
 			setIsLoading(true);
 			const payload = await createSignInPayload();
 
-			if (payload.uuid && payload.qrUrl) {
+			if (payload.uuid) {
 				setPayloadUuid(payload.uuid);
-				setQrUrl(payload.qrUrl);
-
+				
+				if (payload.qrUrl) {
+					setQrUrl(payload.qrUrl);
+				}
+				
 				if (payload.deeplink) {
-					window.open(payload.deeplink, '_blank');
+					setDeeplink(payload.deeplink);
+					// On mobile, automatically open the deeplink
+					if (isMobile) {
+						window.location.href = payload.deeplink;
+					}
 				}
 			}
 		} catch (error) {
@@ -103,15 +113,40 @@ export default function SignInPage() {
 					</>
 				) : (
 					<>
-						<p className="text-center text-gray-300">
-							以下のQRコードをXamanアプリでスキャンしてください
-						</p>
+						{isMobile ? (
+							// Mobile view: Show button to open Xaman app
+							<>
+								<p className="text-center text-gray-300">
+									Xamanアプリで認証を完了してください
+								</p>
 
-						<div className="rounded-lg bg-white p-4">
-							{qrUrl && <Image src={qrUrl} alt="Sign in QR code" width={200} height={200} />}
-						</div>
+								{deeplink && (
+									<button
+										onClick={() => window.location.href = deeplink}
+										className="rounded-full bg-green-600 px-8 py-3 font-semibold transition hover:bg-green-700"
+									>
+										Xamanアプリを開く
+									</button>
+								)}
 
-						<p className="text-center text-gray-400 text-sm">サインインを待っています...</p>
+								<p className="text-center text-gray-400 text-sm">
+									アプリが開かない場合は、Xamanアプリを手動で開いて承認してください
+								</p>
+							</>
+						) : (
+							// Desktop view: Show QR code
+							<>
+								<p className="text-center text-gray-300">
+									以下のQRコードをXamanアプリでスキャンしてください
+								</p>
+
+								<div className="rounded-lg bg-white p-4">
+									{qrUrl && <Image src={qrUrl} alt="Sign in QR code" width={200} height={200} />}
+								</div>
+
+								<p className="text-center text-gray-400 text-sm">サインインを待っています...</p>
+							</>
+						)}
 					</>
 				)}
 			</div>

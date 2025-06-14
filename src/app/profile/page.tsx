@@ -83,8 +83,8 @@ export default function ProfilePage() {
 				<div className="mx-auto max-w-2xl">
 					<h1 className="mb-8 font-bold text-3xl">プロフィール設定</h1>
 
-					<div className="mb-6 rounded-lg bg-white/10 p-6">
-						<div className="mb-6 flex items-start gap-6">
+					<div className="mb-6 rounded-lg bg-white/10 p-4 sm:p-6">
+						<div className="mb-6 flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6">
 							<div className="flex-shrink-0">
 								{profile.emailHash ? (
 									<Image
@@ -92,23 +92,23 @@ export default function ProfilePage() {
 										alt="Avatar"
 										width={100}
 										height={100}
-										className="rounded-full"
+										className="rounded-full w-20 h-20 sm:w-[100px] sm:h-[100px]"
 									/>
 								) : (
-									<div className="flex h-[100px] w-[100px] items-center justify-center rounded-full bg-gray-600">
-										<span className="font-bold text-2xl">
+									<div className="flex h-20 w-20 sm:h-[100px] sm:w-[100px] items-center justify-center rounded-full bg-gray-600">
+										<span className="font-bold text-xl sm:text-2xl">
 											{profile.nickname?.[0] || profile.walletAddress[0]}
 										</span>
 									</div>
 								)}
 							</div>
 
-							<div className="flex-1">
+							<div className="flex-1 w-full text-center sm:text-left">
 								<p className="mb-2 text-gray-400 text-sm">ウォレットアドレス</p>
-								<p className="mb-4 font-mono text-sm">{profile.walletAddress}</p>
+								<p className="mb-4 font-mono text-xs sm:text-sm break-all">{profile.walletAddress}</p>
 
 								{!profile.emailHash && (
-									<form onSubmit={handleSetEmail} className="flex gap-2">
+									<form onSubmit={handleSetEmail} className="flex flex-col sm:flex-row gap-2">
 										<input
 											type="email"
 											value={email}
@@ -118,7 +118,7 @@ export default function ProfilePage() {
 										/>
 										<button
 											type="submit"
-											className="rounded bg-blue-600 px-4 py-2 font-semibold text-sm transition hover:bg-blue-700"
+											className="rounded bg-blue-600 px-4 py-2 font-semibold text-sm transition hover:bg-blue-700 whitespace-nowrap"
 										>
 											設定
 										</button>
@@ -183,7 +183,7 @@ export default function ProfilePage() {
 									</div>
 								</div>
 
-								<div className="flex gap-2 pt-4">
+								<div className="flex flex-col sm:flex-row gap-2 pt-4">
 									<button
 										onClick={handleUpdateProfile}
 										disabled={isUpdating}
