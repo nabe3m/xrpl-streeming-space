@@ -7,7 +7,6 @@ export const env = createEnv({
 	 * isn't built with invalid env vars.
 	 */
 	server: {
-		DATABASE_PROVIDER: z.enum(['sqlite', 'postgresql']),
 		DATABASE_URL: z.string().refine((val) => {
 			// Allow file:// URLs for SQLite or proper URLs for PostgreSQL
 			return val.startsWith('file:') || val.startsWith('postgres://') || val.startsWith('postgresql://');
@@ -40,7 +39,6 @@ export const env = createEnv({
 	 * middlewares) or client-side so we need to destruct manually.
 	 */
 	runtimeEnv: {
-		DATABASE_PROVIDER: process.env.DATABASE_PROVIDER,
 		DATABASE_URL: process.env.DATABASE_URL,
 		NODE_ENV: process.env.NODE_ENV,
 		XRPL_NETWORK: process.env.XRPL_NETWORK,

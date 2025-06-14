@@ -1,7 +1,4 @@
 {
   "buildCommand": "npm run vercel-build",
-  "framework": "nextjs",
-  "env": {
-    "DATABASE_PROVIDER": "postgresql"
-  }
+  "framework": "nextjs"
 }

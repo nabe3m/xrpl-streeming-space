@@ -20,8 +20,7 @@ Choose a PostgreSQL provider and create a database. Popular options:
 Set the following environment variables in your Vercel dashboard:
 
 ```bash
-# Database
-DATABASE_PROVIDER=postgresql
+# Database (PostgreSQL for production)
 DATABASE_URL=postgresql://[user]:[password]@[host]:[port]/[database]?schema=public
 
 # XRPL Configuration
@@ -69,9 +68,9 @@ After deployment:
 For local development with SQLite:
 
 1. Copy `.env.example` to `.env`
-2. Set `DATABASE_PROVIDER=sqlite`
-3. Set `DATABASE_URL=file:./db.sqlite`
-4. Run migrations: `npx prisma migrate dev`
+2. Set `DATABASE_URL=file:./db.sqlite`
+3. Run migrations: `npm run db:generate`
+4. The dev command will automatically use the local schema file
 
 ## Troubleshooting
 
