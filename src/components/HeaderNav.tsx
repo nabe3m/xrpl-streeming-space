@@ -4,10 +4,12 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useScrolled } from '~/hooks/useScrolled';
 
 export function HeaderNav() {
 	const router = useRouter();
 	const { isMobile } = useIsMobile();
+	const isScrolled = useScrolled();
 	const [userId, setUserId] = useState<string | null>(null);
 	const [mounted, setMounted] = useState(false);
 	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -62,7 +64,11 @@ export function HeaderNav() {
 				{/* Menu button */}
 				<button
 					onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-					className="flex items-center gap-1.5 px-3 py-1.5 text-black bg-white rounded-lg hover:bg-gray-100 transition-colors"
+					className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors ${
+						isScrolled 
+							? 'text-black bg-white hover:bg-gray-100' 
+							: 'text-white bg-white/10 hover:bg-white/20 border border-white/20'
+					}`}
 					aria-label="メニュー"
 				>
 					<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -135,13 +141,34 @@ export function HeaderNav() {
 		<div className="flex items-center gap-6">
 			{userId ? (
 				<>
-					<Link href="/dashboard" className="transition hover:text-blue-400">
+					<Link 
+						href="/dashboard" 
+						className={`transition ${
+							! isScrolled 
+								? 'text-gray-700 hover:text-blue-600' 
+								: 'text-white hover:text-blue-400'
+						}`}
+					>
 						ダッシュボード
 					</Link>
-					<Link href="/rooms" className="transition hover:text-blue-400">
+					<Link 
+						href="/rooms" 
+						className={`transition ${
+							! isScrolled 
+								? 'text-gray-700 hover:text-blue-600' 
+								: 'text-white hover:text-blue-400'
+						}`}
+					>
 						ルーム一覧
 					</Link>
-					<Link href="/profile" className="transition hover:text-blue-400">
+					<Link 
+						href="/profile" 
+						className={`transition ${
+							! isScrolled 
+								? 'text-gray-700 hover:text-blue-600' 
+								: 'text-white hover:text-blue-400'
+						}`}
+					>
 						プロフィール
 					</Link>
 					<button
