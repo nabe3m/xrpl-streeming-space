@@ -28,12 +28,7 @@ XRP Spacesは、XRP Ledgerを活用した音声配信プラットフォームで
 - 🔐 Xaman (旧Xumm) ウォレット認証
 - 👤 ユーザープロフィール（ニックネーム設定）
 - 📊 ダッシュボードでの収支管理
-- 💵 ペイメントチャネルの一括クレーム機能
-
-### 開発者向け機能
-- 🛠️ ペイメントチャネル一括クローズツール
-- 🔧 NFTokenMinter権限の管理
-- 📝 トランザクション検証機能
+- 💵 ペイメントチャネルのクレーム機能
 
 ## 技術スタック
 
@@ -81,6 +76,8 @@ NEXT_PUBLIC_XRPL_NETWORK="wss://s.altnet.rippletest.net:51233"
 NEXT_PUBLIC_AGORA_APP_ID="your_agora_app_id"
 NEXT_PUBLIC_XUMM_API_KEY="your_xumm_api_key"
 ```
+
+schema.local.prisma を使用してください。
 
 ### 3. データベースのセットアップ
 ```bash
