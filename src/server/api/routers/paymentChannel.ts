@@ -170,6 +170,57 @@ export const paymentChannelRouter = createTRPCRouter({
 			return channel;
 		}),
 
+	getChannelInfo: protectedProcedure
+		.input(
+			z.object({
+				channelId: z.string(),
+			}),
+		)
+		.query(async ({ ctx, input }) => {
+			// Return null for empty channel ID instead of throwing error
+			if (!input.channelId || input.channelId.trim() === '') {
+				return null;
+			}
+
+			const channel = await ctx.db.paymentChannel.findUnique({
+				where: { channelId: input.channelId },
+			});
+
+			if (!channel) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Payment channel not found',
+				});
+			}
+
+			// Get channel info from ledger
+			const channelInfo = await getPaymentChannelInfo(input.channelId);
+			if (!channelInfo) {
+				throw new TRPCError({
+					code: 'NOT_FOUND',
+					message: 'Payment channel not found on ledger',
+				});
+			}
+
+			const depositAmount = BigInt(channelInfo.amount);
+			const claimedAmount = BigInt(channelInfo.balance);
+			const currentOffLedgerAmount = channel.lastAmount ? BigInt(channel.lastAmount) : 0n;
+			
+			// Available amount = (Deposit - Already Claimed) - Current Off-ledger Amount
+			// This represents how much more can be spent in off-ledger transactions
+			const totalAvailableForOffLedger = depositAmount - claimedAmount;
+			const remainingAvailable = totalAvailableForOffLedger - currentOffLedgerAmount;
+
+			return {
+				channelId: channel.channelId,
+				depositAmount: dropsToXrp(depositAmount.toString()),
+				claimedAmount: dropsToXrp(claimedAmount.toString()),
+				currentOffLedgerAmount: dropsToXrp(currentOffLedgerAmount.toString()),
+				availableAmount: dropsToXrp(remainingAvailable.toString()),
+				totalAvailableForOffLedger: dropsToXrp(totalAvailableForOffLedger.toString()),
+			};
+		}),
+
 	signPayment: protectedProcedure
 		.input(
 			z.object({
@@ -212,50 +263,51 @@ export const paymentChannelRouter = createTRPCRouter({
 				// Use ledger deposit amount for more accurate calculation
 				const depositAmount = BigInt(channelInfo.amount);
 				const alreadyClaimed = BigInt(channelInfo.balance);
-				const incrementalAmountDrops = BigInt(xrpToDrops(input.amountXRP)); // This is the NEW payment amount (e.g., per minute)
+				const cumulativeAmountDrops = BigInt(xrpToDrops(input.amountXRP)); // This is the cumulative off-ledger amount from client
 				
-				// Calculate the cumulative amount based on the last signed amount or claimed amount
-				const lastSignedAmount = channel.lastAmount ? BigInt(channel.lastAmount) : alreadyClaimed;
-				const cumulativeAmount = lastSignedAmount + incrementalAmountDrops;
+				// Calculate available amount for off-ledger transactions
+				// After a claim, lastAmount resets to 0, so we can sign up to (deposit - alreadyClaimed)
 				const availableAmount = depositAmount - alreadyClaimed;
 				
 				console.log('💰 Payment channel balance check:', {
 					depositAmount: dropsToXrp(depositAmount.toString()),
 					alreadyClaimed: dropsToXrp(alreadyClaimed.toString()),
-					lastSignedAmount: dropsToXrp(lastSignedAmount.toString()),
-					incrementalAmount: dropsToXrp(incrementalAmountDrops.toString()),
-					cumulativeAmount: dropsToXrp(cumulativeAmount.toString()),
-					availableAmount: dropsToXrp(availableAmount.toString()),
-					dbAmount: dropsToXrp(channel.amount),
-					dbLastAmount: channel.lastAmount ? dropsToXrp(channel.lastAmount) : '0',
+					requestedOffLedgerAmount: dropsToXrp(cumulativeAmountDrops.toString()),
+					availableForOffLedger: dropsToXrp(availableAmount.toString()),
+					dbLastAmount: channel.lastAmount ? dropsToXrp(channel.lastAmount) : 'null (post-claim)',
 				});
 
-				// Check if cumulative amount exceeds available balance (deposit)
-				if (cumulativeAmount > depositAmount) {
-					console.error('Cumulative amount exceeds deposit:', {
-						incrementalXRP: input.amountXRP,
-						cumulativeXRP: Number(dropsToXrp(cumulativeAmount.toString())),
+				// Check if the off-ledger amount exceeds what's available
+				// The off-ledger amount can go up to (deposit - alreadyClaimed)
+				if (cumulativeAmountDrops > availableAmount) {
+					console.error('Off-ledger amount exceeds available balance:', {
+						requestedOffLedgerXRP: input.amountXRP,
+						availableForOffLedgerXRP: Number(dropsToXrp(availableAmount.toString())),
 						depositXRP: Number(dropsToXrp(depositAmount.toString())),
-						claimedXRP: Number(dropsToXrp(alreadyClaimed.toString())),
-						availableXRP: Number(dropsToXrp(availableAmount.toString())),
+						alreadyClaimedXRP: Number(dropsToXrp(alreadyClaimed.toString())),
 					});
 					throw new TRPCError({
 						code: 'BAD_REQUEST',
-						message: `残高不足: 累計額 (${Number(dropsToXrp(cumulativeAmount.toString()))} XRP) がデポジット額 (${Number(dropsToXrp(depositAmount.toString()))} XRP) を超えています。利用可能残高: ${Number(dropsToXrp(availableAmount.toString()))} XRP`,
+						message: `残高不足: オフレジャー額 (${input.amountXRP} XRP) が利用可能額 (${Number(dropsToXrp(availableAmount.toString()))} XRP) を超えています。デポジット: ${Number(dropsToXrp(depositAmount.toString()))} XRP, クレーム済み: ${Number(dropsToXrp(alreadyClaimed.toString()))} XRP`,
 					});
 				}
 				
-				// Ensure the incremental amount is positive
-				if (incrementalAmountDrops <= 0n) {
+				// After a claim, DB lastAmount is null and we start from 0
+				// The actual last signed amount for validation purposes is:
+				// - If DB lastAmount exists: use it
+				// - If DB lastAmount is null: we're starting fresh from 0 (post-claim)
+				const effectiveLastSignedAmount = channel.lastAmount ? BigInt(channel.lastAmount) : 0n;
+				
+				// Ensure the cumulative amount is greater than last signed amount
+				if (cumulativeAmountDrops <= effectiveLastSignedAmount) {
 					throw new TRPCError({
 						code: 'BAD_REQUEST',
-						message: `Payment amount must be positive. Requested: ${input.amountXRP} XRP`,
+						message: `Amount must be greater than last signed amount. Requested: ${input.amountXRP} XRP, Last signed: ${Number(dropsToXrp(effectiveLastSignedAmount.toString()))} XRP`,
 					});
 				}
 
-				// Sign the cumulative amount (already claimed + new payment)
-				const cumulativeAmountXRP = Number(dropsToXrp(cumulativeAmount.toString()));
-				const payment = await signOffLedgerPayment(input.channelId, cumulativeAmountXRP);
+				// Sign the cumulative amount
+				const payment = await signOffLedgerPayment(input.channelId, input.amountXRP);
 
 				console.log('🚀 🚀 🚀 🚀 🚀 payment', payment.amount);
 
@@ -263,7 +315,7 @@ export const paymentChannelRouter = createTRPCRouter({
 
 				const isValid = await verifyOffLedgerPayment(
 					payment.channelId, // Use the normalized channel ID from payment
-					cumulativeAmountXRP,
+					input.amountXRP,
 					payment.signature,
 					signatureWallet.publicKey,
 				);
@@ -295,7 +347,7 @@ export const paymentChannelRouter = createTRPCRouter({
 				if (paymentChannel) {
 					// Calculate the increment amount (current cumulative - previous cumulative)
 					const previousCumulativeAmount = channel.lastAmount ? Number(dropsToXrp(channel.lastAmount)) : Number(dropsToXrp(alreadyClaimed.toString()));
-					const currentCumulativeAmount = Number(dropsToXrp(payment.amount));
+					const currentCumulativeAmount = input.amountXRP;
 					const incrementAmount = currentCumulativeAmount - previousCumulativeAmount;
 
 					console.log('💳 Payment increment calculation:', {
@@ -408,6 +460,39 @@ export const paymentChannelRouter = createTRPCRouter({
 			const participantIds = participants.map(p => p.userId);
 			const relevantChannels = channels.filter(ch => participantIds.includes(ch.senderId));
 
+			// Fetch ledger info for each channel
+			const channelsWithLedgerInfo = await Promise.all(
+				relevantChannels.map(async (channel) => {
+					try {
+						const channelInfo = await getPaymentChannelInfo(channel.channelId);
+						if (channelInfo) {
+							const depositAmount = BigInt(channelInfo.amount);
+							const claimedAmount = BigInt(channelInfo.balance);
+							const currentOffLedgerAmount = channel.lastAmount ? BigInt(channel.lastAmount) : 0n;
+							const totalAvailableForOffLedger = depositAmount - claimedAmount;
+							const remainingAvailable = totalAvailableForOffLedger - currentOffLedgerAmount;
+
+							return {
+								...channel,
+								ledgerInfo: {
+									depositAmount: dropsToXrp(depositAmount.toString()),
+									claimedAmount: dropsToXrp(claimedAmount.toString()),
+									currentOffLedgerAmount: dropsToXrp(currentOffLedgerAmount.toString()),
+									availableAmount: dropsToXrp(remainingAvailable.toString()),
+									totalUsed: dropsToXrp((claimedAmount + currentOffLedgerAmount).toString()),
+								},
+							};
+						}
+					} catch (error) {
+						console.error('Failed to fetch ledger info for channel:', channel.channelId, error);
+					}
+					return {
+						...channel,
+						ledgerInfo: null,
+					};
+				})
+			);
+
 			console.log('🚀 getChannelsForRoom:', {
 				hostId: ctx.session.userId,
 				totalChannels: channels.length,
@@ -415,7 +500,7 @@ export const paymentChannelRouter = createTRPCRouter({
 				participantIds,
 			});
 
-			return relevantChannels;
+			return channelsWithLedgerInfo;
 		}),
 
 	getMyChannelForRoom: protectedProcedure

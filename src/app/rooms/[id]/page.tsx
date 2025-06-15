@@ -198,6 +198,16 @@ export default function RoomPage() {
 		},
 	});
 
+	// Fetch channel info from ledger
+	const channelIdForQuery = myChannel?.channelId || paymentChannelId;
+	const { data: channelInfo } = api.paymentChannel.getChannelInfo.useQuery(
+		{ channelId: channelIdForQuery || '' },
+		{
+			enabled: !!channelIdForQuery && !isHost,
+			refetchInterval: 5000, // Refetch every 5 seconds
+		}
+	);
+
 	const { mutate: joinRoom } = api.room.join.useMutation({
 		onSuccess: () => {
 			// 参加成功時にルーム情報を再取得
@@ -380,7 +390,38 @@ export default function RoomPage() {
 	// XummのAPI呼び出し用mutation（ペイロード結果取得のみ必要）
 	const getPayloadResultMutation = api.xumm.getPayloadResult.useMutation();
 
-	// Removed ledger channel info fetching - API already provides updated channel amounts
+	// Helper function to calculate actual balance
+	const getActualBalance = () => {
+		if (channelInfo && channelInfo.depositAmount !== undefined) {
+			// Use accurate data from ledger
+			const ledgerClaimedAmount = Number(channelInfo.claimedAmount);
+			const currentOffLedgerAmount = Number(channelInfo.currentOffLedgerAmount || 0);
+			
+			return {
+				depositAmount: Number(channelInfo.depositAmount),
+				claimedAmount: ledgerClaimedAmount + currentOffLedgerAmount, // Total used
+				availableAmount: Number(channelInfo.availableAmount),
+			};
+		} else if (myChannel) {
+			// Fall back to DB data
+			const depositAmountDrops = BigInt(myChannel.amount);
+			const usedAmountDrops = BigInt(myChannel.lastAmount || '0');
+			const availableAmountDrops = depositAmountDrops - usedAmountDrops;
+			
+			return {
+				depositAmount: Number(dropsToXrp(depositAmountDrops.toString())),
+				claimedAmount: Number(dropsToXrp(usedAmountDrops.toString())),
+				availableAmount: availableAmountDrops >= 0n 
+					? Number(dropsToXrp(availableAmountDrops.toString()))
+					: 0,
+			};
+		}
+		return {
+			depositAmount: 0,
+			claimedAmount: 0,
+			availableAmount: 0,
+		};
+	};
 
 	// Agoraのユーザー数が変化したらルーム情報を再取得
 	useEffect(() => {
@@ -541,7 +582,7 @@ export default function RoomPage() {
 				const existingAmountXRP = myChannel.lastAmount
 					? Number(dropsToXrp(myChannel.lastAmount))
 					: 0;
-				const totalSeconds = startPaymentTimer(myChannel.channelId, existingAmountXRP);
+				const totalSeconds = await startPaymentTimer(myChannel.channelId, existingAmountXRP);
 				if (totalSeconds !== undefined) {
 					setTotalPaidSeconds(totalSeconds);
 				}
@@ -777,7 +818,7 @@ export default function RoomPage() {
 								: 0;
 							
 							// タイマーを再開（lastAmountから継続）
-							const totalSeconds = startPaymentTimer(channelData.channelId, lastAmountXRP);
+							const totalSeconds = await startPaymentTimer(channelData.channelId, lastAmountXRP);
 							if (totalSeconds !== undefined) {
 								setTotalPaidSeconds(totalSeconds);
 								console.log('✅ Payment timer restarted with lastAmount:', lastAmountXRP);
@@ -939,7 +980,7 @@ export default function RoomPage() {
 				const existingAmountXRP = existingChannel.lastAmount
 					? Number(dropsToXrp(existingChannel.lastAmount))
 					: 0;
-				const totalSeconds = startPaymentTimer(existingChannel.channelId, existingAmountXRP);
+				const totalSeconds = await startPaymentTimer(existingChannel.channelId, existingAmountXRP);
 				if (totalSeconds !== undefined) {
 					setTotalPaidSeconds(totalSeconds);
 				}
@@ -1000,7 +1041,7 @@ export default function RoomPage() {
 				const existingAmountXRP = result.channel.lastAmount
 					? Number(dropsToXrp(result.channel.lastAmount))
 					: 0;
-				const totalSeconds = startPaymentTimer(result.channel.channelId, existingAmountXRP);
+				const totalSeconds = await startPaymentTimer(result.channel.channelId, existingAmountXRP);
 				if (totalSeconds !== undefined) {
 					setTotalPaidSeconds(totalSeconds);
 				}
@@ -1146,7 +1187,7 @@ export default function RoomPage() {
 						await refetchRoom();
 
 						// 支払いタイマーを開始
-						const totalSeconds = startPaymentTimer(newChannel.channelId, 0);
+						const totalSeconds = await startPaymentTimer(newChannel.channelId, 0);
 						if (totalSeconds !== undefined) {
 							setTotalPaidSeconds(totalSeconds);
 						}
@@ -1435,61 +1476,36 @@ export default function RoomPage() {
 																	<div className="flex justify-between text-xs">
 																		<span className="text-gray-400">デポジット額:</span>
 																		<span className="text-white">
-																			{dropsToXrp(myChannel.amount)} XRP
+																			{getActualBalance().depositAmount.toFixed(6)} XRP
 																		</span>
 																	</div>
 																	<div className="flex justify-between text-xs">
 																		<span className="text-gray-400">使用済み額:</span>
 																		<span className="text-white">
-																			{myChannel.lastAmount
-																				? dropsToXrp(myChannel.lastAmount)
-																				: '0'}{' '}
-																			XRP
+																			{getActualBalance().claimedAmount.toFixed(6)} XRP{' '}
 																		</span>
 																	</div>
 																	<div className="flex justify-between text-xs">
 																		<span className="text-gray-400">残高:</span>
 																		<span className="font-semibold text-green-300">
-																			{(() => {
-																				// Calculate balance: deposit - used
-																				const depositAmount = BigInt(myChannel.amount);
-																				console.log('depositAmount', depositAmount);
-																				const usedAmount = BigInt(myChannel.lastAmount || '0');
-																				const availableBalance = depositAmount - usedAmount;
-																				
-																				return dropsToXrp(availableBalance.toString());
-																			})()}{' '}
-																			XRP
+																			{getActualBalance().availableAmount.toFixed(6)} XRP
 																		</span>
 																	</div>
 																	<div className="flex justify-between text-xs">
 																		<span className="text-gray-400">視聴可能時間:</span>
 																		<span
 																			className={
-																				(() => {
-																					const depositAmount = BigInt(myChannel.amount);
-																					const usedAmount = BigInt(myChannel.lastAmount || '0');
-																					const availableBalance = depositAmount - usedAmount;
-																					const minutes = Math.floor(Number(dropsToXrp(availableBalance.toString())) / room.xrpPerMinute);
-																					return minutes < 5;
-																				})()
+																				Math.floor(getActualBalance().availableAmount / room.xrpPerMinute) < 5
 																					? 'text-red-400'
 																					: 'text-yellow-300'
 																			}
 																		>
-																			約
-																			{(() => {
-																				const depositAmount = BigInt(myChannel.amount);
-																				const usedAmount = BigInt(myChannel.lastAmount || '0');
-																				const availableBalance = depositAmount - usedAmount;
-																				return Math.floor(Number(dropsToXrp(availableBalance.toString())) / room.xrpPerMinute);
-																			})()}
-																			分
+																			約{Math.floor(getActualBalance().availableAmount / room.xrpPerMinute)}分
 																		</span>
 																	</div>
 																	<div className="border-gray-700 border-t pt-2">
 																		<a
-																			href={`${env.NEXT_PUBLIC_XRPL_NETWORK.includes('testnet') ? 'https://test.xrplexplorer.com/ja/object/transactions/' : 'https://xrplexplorer.com/ja/object/'}/transactions/${myChannel.channelId}`}
+																			href={`${env.NEXT_PUBLIC_XRPL_NETWORK.includes('testnet') ? 'https://test.xrplexplorer.com/en/object/' : 'https://xrplexplorer.com/en/object/'}${myChannel.channelId}`}
 																			target="_blank"
 																			rel="noopener noreferrer"
 																			className="flex items-center gap-1 text-blue-400 text-xs underline hover:text-blue-300"
@@ -1511,14 +1527,7 @@ export default function RoomPage() {
 																		</a>
 																	</div>
 																</div>
-																{Math.floor(
-																	Number(
-																		dropsToXrp(
-																			BigInt(myChannel.amount) -
-																				BigInt(myChannel.lastAmount || '0'),
-																		),
-																	) / room.xrpPerMinute,
-																) < 5 && (
+																{Math.floor(getActualBalance().availableAmount / room.xrpPerMinute) < 5 && (
 																	<div className="mt-2 space-y-2">
 																		<p className="text-red-400 text-xs">
 																			⚠️
@@ -1620,28 +1629,12 @@ export default function RoomPage() {
 																	<span>視聴可能時間:</span>
 																	<span
 																		className={
-																			Math.floor(
-																				Number(
-																					dropsToXrp(
-																						BigInt(myChannel.amount) -
-																							BigInt(myChannel.lastAmount || '0'),
-																					),
-																				) / (room.xrpPerMinute || 0.01),
-																			) < 5
+																			Math.floor(getActualBalance().availableAmount / (room.xrpPerMinute || 0.01)) < 5
 																				? 'font-semibold text-red-400'
 																				: 'text-green-300'
 																		}
 																	>
-																		約
-																		{Math.floor(
-																			Number(
-																				dropsToXrp(
-																					BigInt(myChannel.amount) -
-																						BigInt(myChannel.lastAmount || '0'),
-																				),
-																			) / (room.xrpPerMinute || 0.01),
-																		)}
-																		分
+																		約{Math.floor(getActualBalance().availableAmount / (room.xrpPerMinute || 0.01))}分
 																	</span>
 																</div>
 															)}
@@ -1672,14 +1665,7 @@ export default function RoomPage() {
 																	room.paymentMode !== 'NFT_TICKET' &&
 																	room.xrpPerMinute > 0 &&
 																	myChannel &&
-																	Math.floor(
-																		Number(
-																			dropsToXrp(
-																				BigInt(myChannel.amount) -
-																					BigInt(myChannel.lastAmount || '0'),
-																			),
-																		) / (room.xrpPerMinute || 0.01),
-																	) <= 0)
+																	Math.floor(getActualBalance().availableAmount / (room.xrpPerMinute || 0.01)) <= 0)
 															)
 														}
 														className="w-full rounded-full bg-blue-600 px-8 py-3 font-semibold text-lg transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1709,14 +1695,7 @@ export default function RoomPage() {
 																</p>
 															)}
 															{myChannel &&
-																Math.floor(
-																	Number(
-																		dropsToXrp(
-																			BigInt(myChannel.amount) -
-																				BigInt(myChannel.lastAmount || '0'),
-																		),
-																	) / (room.xrpPerMinute || 0.01),
-																) <= 0 && (
+																Math.floor(getActualBalance().availableAmount / (room.xrpPerMinute || 0.01)) <= 0 && (
 																	<p className="mt-2 text-center text-red-300 text-sm">
 																		⚠️ 残高不足です。デポジットを追加してください
 																	</p>

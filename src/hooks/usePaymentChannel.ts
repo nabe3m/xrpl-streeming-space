@@ -28,6 +28,7 @@ export function usePaymentChannel({
 }: UsePaymentChannelProps) {
 	const paymentIntervalRef = useRef<NodeJS.Timeout | null>(null);
 	const totalPaidSecondsRef = useRef<number>(0);
+	const lastSignedAmountRef = useRef<number>(0);
 
 	// 自分の支払いチャネルを取得
 	const {
@@ -44,6 +45,7 @@ export function usePaymentChannel({
 		},
 	);
 
+
 	// ホストの場合はリスナーからの支払いチャネルを取得
 	const { data: incomingChannels } = api.paymentChannel.getChannelsForRoom.useQuery(
 		{ roomId },
@@ -55,7 +57,12 @@ export function usePaymentChannel({
 
 	const { mutate: signPayment } = api.paymentChannel.signPayment.useMutation({
 		onError: (error) => {
-			console.error('Failed to sign payment:', error);
+			console.error('❌ Failed to sign payment:', error);
+			console.error('Error details:', {
+				message: error.message,
+				data: error.data,
+			});
+			
 			// 支払いタイマーを停止
 			if (paymentIntervalRef.current) {
 				clearInterval(paymentIntervalRef.current);
@@ -63,15 +70,15 @@ export function usePaymentChannel({
 				console.error('Payment timer stopped due to error');
 			}
 			
-			// 残高不足エラーの場合は、onBalanceInsufficientコールバックを呼び出す
-			if (error.message && (
-				error.message.includes('残高不足') || 
-				error.message.includes('Amount must be greater than last signed amount')
-			)) {
+			// 残高不足エラーの場合のみ、onBalanceInsufficientコールバックを呼び出す
+			if (error.message && error.message.includes('残高不足')) {
+				console.error('⚠️ Balance insufficient detected from server');
 				if (onBalanceInsufficient) {
 					console.log('Calling onBalanceInsufficient callback due to payment error');
 					onBalanceInsufficient();
 				}
+			} else {
+				console.log('❗ Error is not balance-related:', error.message);
 			}
 		},
 	});
@@ -81,7 +88,7 @@ export function usePaymentChannel({
 	const { mutateAsync: addDeposit } = api.paymentChannel.addDeposit.useMutation();
 
 	const startPaymentTimer = useCallback(
-		(channelId: string, existingAmountXRP?: number, resumeFromSeconds?: number) => {
+		async (channelId: string, existingAmountXRP?: number, resumeFromSeconds?: number) => {
 			if (!channelId || !room?.xrpPerMinute) {
 				console.error('Cannot start payment timer without channel ID or xrpPerMinute');
 				return;
@@ -97,6 +104,44 @@ export function usePaymentChannel({
 			let totalSeconds = 0;
 			let lastSignedAmount = existingAmountXRP || 0;
 			let lastKnownDbAmount = existingAmountXRP || 0; // Track the DB amount separately
+			
+			// Update the ref with initial value
+			lastSignedAmountRef.current = lastSignedAmount;
+			
+			// First, get the current channel state to check if we need ledger balance
+			const { data: initialChannelData } = await refetchMyChannel();
+			if (initialChannelData && !initialChannelData.lastAmount && existingAmountXRP === 0) {
+				// DB lastAmount is null and no existing amount provided
+				// This happens after a claim - off-ledger transactions start from 0
+				console.log('📊 DB lastAmount is null after claim, starting from 0');
+				
+				// After a claim, we start fresh from 0
+				lastSignedAmount = 0;
+				totalSeconds = 0;
+				console.log('🔄 Starting fresh after claim - off-ledger amount starts from 0');
+			} else if (initialChannelData) {
+				// Normal case - use DB data
+				const dbLastAmountXRP = initialChannelData.lastAmount ? Number(dropsToXrp(initialChannelData.lastAmount)) : 0;
+				
+				// If DB shows 0 but existingAmountXRP has a value, use it
+				if (dbLastAmountXRP === 0 && existingAmountXRP && existingAmountXRP > 0) {
+					lastSignedAmount = existingAmountXRP;
+					lastKnownDbAmount = existingAmountXRP;
+					console.log('💰 Using provided existingAmountXRP:', {
+						existingAmountXRP,
+						dbLastAmountXRP,
+						lastSignedAmount
+					});
+				}
+			}
+			
+			console.log('🚀 Starting payment timer:', {
+				channelId,
+				existingAmountXRP,
+				resumeFromSeconds,
+				initialLastSignedAmount: lastSignedAmount,
+				xrpPerMinute: room?.xrpPerMinute,
+			});
 
 			// If resuming from a specific second count (after deposit), use that
 			if (resumeFromSeconds !== undefined && resumeFromSeconds > 0) {
@@ -108,7 +153,8 @@ export function usePaymentChannel({
 					lastSignedAmount,
 					xrpPerMinute: room.xrpPerMinute,
 				});
-			} else if (existingAmountXRP && existingAmountXRP > 0) {
+			} else if (existingAmountXRP && existingAmountXRP > 0 && totalSeconds === 0) {
+				// Only calculate totalSeconds if not already set by ledger balance check
 				const baseSeconds = (existingAmountXRP / room.xrpPerMinute) * 60;
 				totalSeconds = Math.ceil(baseSeconds) + 1;
 
@@ -148,6 +194,7 @@ export function usePaymentChannel({
 					onSecondsUpdate(totalSeconds);
 				}
 
+
 				// 1秒ごとに支払い署名を送信（仕様通り）
 				const totalXrp = (totalSeconds / 60) * (room.xrpPerMinute || 0);
 				// Round to 6 decimal places (XRP precision limit)
@@ -171,19 +218,12 @@ export function usePaymentChannel({
 						}
 					}
 					
-					// 使用済み額は、DBの値と現在のlastSignedAmountの大きい方を使用
-					const actualUsedAmountXRP = Math.max(dbLastAmountXRP, lastSignedAmount);
-					const availableBalanceXRP = totalDepositXRP - actualUsedAmountXRP;
-
-					// 次の累積額が総デポジット額を超える場合は停止
-					// roundedXrpは累積額
+					// 現在の累積署名額（roundedXrp）が総デポジット額を超える場合は停止
 					if (roundedXrp > totalDepositXRP) {
 						console.warn('Payment timer stopped - would exceed deposit:', {
-							cumulativeAmount: roundedXrp,
+							nextCumulativeAmount: roundedXrp,
 							totalDeposit: totalDepositXRP,
-							actualUsedAmount: actualUsedAmountXRP,
-							availableBalance: availableBalanceXRP,
-							dbLastAmount: dbLastAmountXRP,
+							currentLastAmount: dbLastAmountXRP,
 							localLastSignedAmount: lastSignedAmount,
 						});
 						clearInterval(interval);
@@ -197,12 +237,13 @@ export function usePaymentChannel({
 					}
 
 					// 残高が少なくなってきた場合の警告（残り1分以下）
+					const availableBalanceXRP = totalDepositXRP - dbLastAmountXRP;
 					const remainingMinutes = availableBalanceXRP / (room.xrpPerMinute || 0.01);
-					if (remainingMinutes < 1) {
+					if (remainingMinutes < 1 && remainingMinutes >= 0) {
 						console.warn('Low balance warning - less than 1 minute remaining:', {
 							currentAmount: roundedXrp,
 							totalDeposit: totalDepositXRP,
-							actualUsedAmount: actualUsedAmountXRP,
+							usedAmount: dbLastAmountXRP,
 							availableBalance: availableBalanceXRP,
 							remainingMinutes,
 						});
@@ -216,20 +257,22 @@ export function usePaymentChannel({
 					// Round to 6 decimal places to avoid floating point precision issues
 					const roundedIncrementalPayment = Math.round(incrementalPayment * 1000000) / 1000000;
 					
-					console.log('Signing payment:', {
+					console.log('💰 Signing payment:', {
 						channelId,
 						cumulativeAmountXRP: roundedXrp,
 						incrementalAmountXRP: roundedIncrementalPayment,
 						totalSeconds,
 						xrpPerMinute: room.xrpPerMinute,
 						lastSignedAmount,
+						difference: roundedXrp - lastSignedAmount,
 					});
 
 					lastSignedAmount = roundedXrp;
+					lastSignedAmountRef.current = roundedXrp; // Update ref
 
 					signPayment({
 						channelId,
-						amountXRP: roundedIncrementalPayment,  // Send incremental amount, not cumulative
+						amountXRP: roundedXrp,  // Send cumulative amount
 					});
 				} else {
 					console.log('Skipping payment signature (amount not increased yet):', {
