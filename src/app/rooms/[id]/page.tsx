@@ -1,7 +1,7 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { dropsToXrp, xrpToDrops } from 'xrpl';
 // import { AudioLevelIndicator } from '~/components/AudioLevelIndicator';
 import { generateNumericUid } from '~/lib/uid';
@@ -15,6 +15,7 @@ import { PaymentStatusDisplay } from '~/components/room/PaymentStatusDisplay';
 import { RoomInfo } from '~/components/room/RoomInfo';
 import { SpeakPermissionNotification } from '~/components/room/SpeakPermissionNotification';
 import { NFTTicketPurchase } from '~/components/room/NFTTicketPurchase';
+import { NFTOwnershipProof } from '~/components/room/NFTOwnershipProof';
 import { env } from '~/env';
 import { useAgora } from '~/hooks/useAgora';
 import { usePaymentChannel } from '~/hooks/usePaymentChannel';
@@ -43,6 +44,7 @@ export default function RoomPage() {
 	const [isBalanceInsufficient, setIsBalanceInsufficient] = useState(false);
 	const [hasNFTAccess, setHasNFTAccess] = useState<boolean | null>(null);
 	const [isCheckingNFTAccess, setIsCheckingNFTAccess] = useState(false);
+	const balanceInsufficientHandledRef = useRef(false);
 
 	// ログインチェック
 	useEffect(() => {
@@ -138,7 +140,14 @@ export default function RoomPage() {
 		enabled: !!room,
 		onSecondsUpdate: setTotalPaidSeconds,
 		onBalanceInsufficient: async () => {
+			// Prevent multiple executions
+			if (balanceInsufficientHandledRef.current) {
+				console.log('⚠️ Balance insufficient already handled, skipping');
+				return;
+			}
+			
 			console.warn('🚨 Balance insufficient - stopping all audio and revoking permissions');
+			balanceInsufficientHandledRef.current = true;
 			
 			// 残高不足状態を設定
 			setIsBalanceInsufficient(true);
@@ -187,11 +196,15 @@ export default function RoomPage() {
 			}
 			
 			// 4. ホストからの音声を完全に停止
-			try {
-				await pauseRemoteAudio();
-				console.log('✅ Remote audio stopped due to insufficient balance');
-			} catch (error) {
-				console.error('❌ Failed to stop remote audio:', error);
+			if (!isRemoteAudioPaused) {
+				try {
+					await pauseRemoteAudio();
+					console.log('✅ Remote audio stopped due to insufficient balance');
+				} catch (error) {
+					console.error('❌ Failed to stop remote audio:', error);
+				}
+			} else {
+				console.log('⚠️ Remote audio already paused, skipping pauseRemoteAudio call');
 			}
 			
 			alert('残高が不足したため、音声を停止し、発言権を取り消しました。デポジットを追加してください。');
@@ -369,7 +382,7 @@ export default function RoomPage() {
 			console.log('✅ Left Agora channel');
 
 			// Agoraが完全にクリーンアップされるのを待つ
-			await new Promise((resolve) => setTimeout(resolve, 500));
+			await new Promise((resolve) => setTimeout(resolve, 1000));
 
 			console.log('🚀 Leaving room on server...');
 			// サーバー側の処理
@@ -390,8 +403,8 @@ export default function RoomPage() {
 	// XummのAPI呼び出し用mutation（ペイロード結果取得のみ必要）
 	const getPayloadResultMutation = api.xumm.getPayloadResult.useMutation();
 
-	// Helper function to calculate actual balance
-	const getActualBalance = () => {
+	// Memoize balance calculation to prevent infinite loops
+	const actualBalance = useMemo(() => {
 		if (channelInfo && channelInfo.depositAmount !== undefined) {
 			// Use accurate data from ledger
 			const ledgerClaimedAmount = Number(channelInfo.claimedAmount);
@@ -421,7 +434,37 @@ export default function RoomPage() {
 			claimedAmount: 0,
 			availableAmount: 0,
 		};
-	};
+	}, [channelInfo, myChannel]);
+
+	// Helper function to get actual balance (for backward compatibility)
+	const getActualBalance = useCallback(() => actualBalance, [actualBalance]);
+
+	// Memoize remaining minutes calculation
+	const remainingMinutes = useMemo(() => {
+		if (!room?.xrpPerMinute || room.xrpPerMinute === 0) return 0;
+		return Math.floor(actualBalance.availableAmount / room.xrpPerMinute);
+	}, [actualBalance.availableAmount, room?.xrpPerMinute]);
+
+	// Monitor balance for audio control - properly manage pause/resume to prevent infinite loops
+	useEffect(() => {
+		// Only monitor balance for non-hosts in paid rooms
+		if (isHost || !room || room.paymentMode === 'NFT_TICKET' || !room.xrpPerMinute || room.xrpPerMinute === 0) {
+			return;
+		}
+
+		// Check if we should pause audio (balance insufficient)
+		if (remainingMinutes <= 0 && !isRemoteAudioPaused && isJoined) {
+			console.log('Balance insufficient - pausing remote audio');
+			// Audio pausing is already handled by onBalanceInsufficient callback
+			// We don't need to call pauseRemoteAudio here to avoid duplicate calls
+		}
+		
+		// Check if we should resume audio (balance restored)
+		if (remainingMinutes > 0 && isRemoteAudioPaused && isJoined) {
+			console.log('Balance restored - resuming remote audio');
+			resumeRemoteAudio();
+		}
+	}, [remainingMinutes, isRemoteAudioPaused, isJoined, isHost, room, resumeRemoteAudio]);
 
 	// Agoraのユーザー数が変化したらルーム情報を再取得
 	useEffect(() => {
@@ -606,7 +649,17 @@ export default function RoomPage() {
 			}
 		} catch (error) {
 			console.error('Failed to join room:', error);
-			alert('ルームへの参加に失敗しました');
+			
+			// Handle specific error types
+			if (error instanceof Error) {
+				if (error.message.includes('UID conflict')) {
+					alert('同じアカウントで複数のタブから接続することはできません。他のタブを閉じてから再度お試しください。');
+				} else {
+					alert(`ルームへの参加に失敗しました: ${error.message}`);
+				}
+			} else {
+				alert('ルームへの参加に失敗しました');
+			}
 		} finally {
 			setIsJoining(false);
 		}
@@ -791,6 +844,7 @@ export default function RoomPage() {
 
 						// 残高不足状態をリセット
 						setIsBalanceInsufficient(false);
+						balanceInsufficientHandledRef.current = false; // Reset the flag
 						console.log('✅ Balance insufficient state reset');
 						
 						// デポジット追加成功後、音声を再開
@@ -1357,16 +1411,51 @@ export default function RoomPage() {
 				ticketPrice={room.nftTicketPrice || 1}
 				ticketImageUrl={room.nftTicketImageUrl || undefined}
 				onPurchaseComplete={async () => {
-					console.log('NFT Purchase completed, refetching access...');
-					// Reset checking state and refetch
+					console.log('NFT Purchase completed, starting access verification...');
+					// Reset checking state
 					setIsCheckingNFTAccess(true);
 					setHasNFTAccess(null);
-					// Refetch access and room data
-					await Promise.all([
-						refetchNFTAccess(),
-						refetchRoom()
-					]);
-					console.log('Refetch completed');
+					
+					// Wait a bit for blockchain state to propagate
+					console.log('Waiting for blockchain state to propagate...');
+					await new Promise(resolve => setTimeout(resolve, 3000));
+					
+					// Refetch access multiple times with delays to ensure we get the latest state
+					let retries = 0;
+					const maxRetries = 5;
+					
+					while (retries < maxRetries) {
+						console.log(`Access check attempt ${retries + 1}/${maxRetries}`);
+						
+						// Force refetch
+						const { data: newAccessData } = await refetchNFTAccess();
+						console.log('Access check result:', newAccessData);
+						
+						if (newAccessData?.hasAccess) {
+							console.log('Access granted! NFT ownership confirmed.');
+							setHasNFTAccess(true);
+							setIsCheckingNFTAccess(false);
+							break;
+						}
+						
+						retries++;
+						if (retries < maxRetries) {
+							// Wait before next retry
+							console.log(`Access not confirmed yet, retrying in 3 seconds...`);
+							await new Promise(resolve => setTimeout(resolve, 3000));
+						}
+					}
+					
+					// Also refetch room data
+					await refetchRoom();
+					
+					if (retries === maxRetries) {
+						console.error('Failed to confirm NFT access after multiple retries');
+						// Force one more manual check
+						setIsCheckingNFTAccess(false);
+						// User might need to reload the page
+						alert('NFT購入は完了しましたが、アクセス確認に失敗しました。ページをリロードしてください。');
+					}
 				}}
 			/>
 		);
@@ -1456,6 +1545,10 @@ export default function RoomPage() {
 														? 'ルームはまだ開始されていません'
 														: 'ルームに参加しますか？'}
 												</p>
+												{/* NFTチケットモードの場合、所有証明を表示 */}
+												{!isHost && room.paymentMode === 'NFT_TICKET' && nftAccessData?.hasAccess && nftAccessData.nftDetails && (
+													<NFTOwnershipProof nftDetails={nftAccessData.nftDetails} />
+												)}
 												{!isHost && room.paymentMode !== 'NFT_TICKET' && room.xrpPerMinute && room.xrpPerMinute > 0 && (
 													<div className="mb-4 rounded-lg bg-yellow-900/50 p-4">
 														<p className="mb-2 text-sm text-yellow-300">
@@ -1495,12 +1588,12 @@ export default function RoomPage() {
 																		<span className="text-gray-400">視聴可能時間:</span>
 																		<span
 																			className={
-																				Math.floor(getActualBalance().availableAmount / room.xrpPerMinute) < 5
+																				remainingMinutes < 5
 																					? 'text-red-400'
 																					: 'text-yellow-300'
 																			}
 																		>
-																			約{Math.floor(getActualBalance().availableAmount / room.xrpPerMinute)}分
+																			約{remainingMinutes}分
 																		</span>
 																	</div>
 																	<div className="border-gray-700 border-t pt-2">
@@ -1527,7 +1620,7 @@ export default function RoomPage() {
 																		</a>
 																	</div>
 																</div>
-																{Math.floor(getActualBalance().availableAmount / room.xrpPerMinute) < 5 && (
+																{remainingMinutes < 5 && (
 																	<div className="mt-2 space-y-2">
 																		<p className="text-red-400 text-xs">
 																			⚠️
@@ -1629,12 +1722,12 @@ export default function RoomPage() {
 																	<span>視聴可能時間:</span>
 																	<span
 																		className={
-																			Math.floor(getActualBalance().availableAmount / (room.xrpPerMinute || 0.01)) < 5
+																			remainingMinutes < 5
 																				? 'font-semibold text-red-400'
 																				: 'text-green-300'
 																		}
 																	>
-																		約{Math.floor(getActualBalance().availableAmount / (room.xrpPerMinute || 0.01))}分
+																		約{remainingMinutes}分
 																	</span>
 																</div>
 															)}
@@ -1665,7 +1758,7 @@ export default function RoomPage() {
 																	room.paymentMode !== 'NFT_TICKET' &&
 																	room.xrpPerMinute > 0 &&
 																	myChannel &&
-																	Math.floor(getActualBalance().availableAmount / (room.xrpPerMinute || 0.01)) <= 0)
+																	remainingMinutes <= 0)
 															)
 														}
 														className="w-full rounded-full bg-blue-600 px-8 py-3 font-semibold text-lg transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1695,7 +1788,7 @@ export default function RoomPage() {
 																</p>
 															)}
 															{myChannel &&
-																Math.floor(getActualBalance().availableAmount / (room.xrpPerMinute || 0.01)) <= 0 && (
+																remainingMinutes <= 0 && (
 																	<p className="mt-2 text-center text-red-300 text-sm">
 																		⚠️ 残高不足です。デポジットを追加してください
 																	</p>
@@ -1765,6 +1858,13 @@ export default function RoomPage() {
 													remoteAudioLevels={remoteAudioLevels}
 													participants={room.participants as ParticipantWithAllFields[]}
 												/>
+											)}
+
+											{/* NFTチケットモードの場合、所有証明を表示 */}
+											{room.paymentMode === 'NFT_TICKET' && !isHost && nftAccessData?.hasAccess && nftAccessData.nftDetails && (
+												<div className="mt-4">
+													<NFTOwnershipProof nftDetails={nftAccessData.nftDetails} />
+												</div>
 											)}
 
 											{/* NFTチケットモード以外の場合のみペイメントステータスを表示 */}

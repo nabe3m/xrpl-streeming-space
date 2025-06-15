@@ -5,4 +5,5 @@ export { ParticipantsList } from './ParticipantsList';
 export { PaymentChannelManager } from './PaymentChannelManager';
 export { JoinRoomButton } from './JoinRoomButton';
 export { PaymentStatus } from './PaymentStatus';
+export { NFTOwnershipProof } from './NFTOwnershipProof';
 export type * from './types';

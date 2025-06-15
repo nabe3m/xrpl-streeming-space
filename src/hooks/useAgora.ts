@@ -211,6 +211,18 @@ export function useAgora({
 				});
 				return true;
 			}
+			
+			// 接続中の場合はクリーンアップ
+			if (client.connectionState === 'CONNECTING') {
+				console.log('Cleaning up existing connection before join...');
+				try {
+					await client.leave();
+					// 少し待つ
+					await new Promise(resolve => setTimeout(resolve, 1000));
+				} catch (cleanupError) {
+					console.error('Error during pre-join cleanup:', cleanupError);
+				}
+			}
 
 			// 接続状態が中間状態の場合は待機
 			if (client.connectionState === 'CONNECTING' || client.connectionState === 'RECONNECTING') {
@@ -303,7 +315,7 @@ export function useAgora({
 					// 少し待ってから再接続を促す
 					await new Promise(resolve => setTimeout(resolve, 2000));
 					
-					throw new Error('UID conflict - Another user is using this ID. Please try again.');
+					throw new Error('UID conflict detected. This usually happens when trying to join from multiple tabs. Please close other tabs and try again.');
 				}
 				
 				throw error;

@@ -13,11 +13,11 @@ interface PaymentChannel {
 	};
 	updatedAt: Date;
 	ledgerInfo?: {
-		depositAmount: string;
-		claimedAmount: string;
-		currentOffLedgerAmount: string;
-		availableAmount: string;
-		totalUsed: string;
+		depositAmount: string | number;
+		claimedAmount: string | number;
+		currentOffLedgerAmount: string | number;
+		availableAmount: string | number;
+		totalUsed: string | number;
 	} | null;
 }
 
@@ -294,7 +294,13 @@ export function PaymentStatusDisplay({
 						<span className="font-mono font-semibold text-green-100">
 							{incomingChannels
 								.reduce(
-									(sum, ch) => sum + (ch.lastAmount ? Number(dropsToXrp(ch.lastAmount)) : 0),
+									(sum, ch) => {
+										// Use ledgerInfo.totalUsed when available, otherwise fall back to lastAmount
+										if (ch.ledgerInfo) {
+											return sum + Number(ch.ledgerInfo.totalUsed);
+										}
+										return sum + (ch.lastAmount ? Number(dropsToXrp(ch.lastAmount)) : 0);
+									},
 									0,
 								)
 								.toFixed(6)}{' '}

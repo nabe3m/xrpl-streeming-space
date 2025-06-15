@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { dropsToXrp } from 'xrpl';
 
 interface DepositAdditionProps {

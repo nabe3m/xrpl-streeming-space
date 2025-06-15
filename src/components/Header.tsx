@@ -17,7 +17,11 @@ export function Header() {
 				<nav className="flex items-center justify-between py-4">
 					<Link 
 						href="/" 
-						className="font-bold text-lg md:text-xl transition-colors text-gray-900"
+						className={`font-bold text-lg md:text-xl transition-colors ${
+							isScrolled 
+								? 'text-white' 
+								: 'text-gray-900'
+						}`}
 					>
 						XRP <span className='text-[hsl(200,100%,70%)]'>Spaces</span>
 					</Link>

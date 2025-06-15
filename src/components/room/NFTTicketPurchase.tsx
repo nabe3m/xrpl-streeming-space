@@ -79,25 +79,44 @@ export function NFTTicketPurchase({
         await subscribeToPayload(
           result.payload.uuid,
           async (data) => {
-            if (data.signed === true) {
-              setStatusMessage('購入を処理中...');
+            console.log('Websocket data received:', data);
+            
+            if (data.signed === true && data.txid) {
+              setStatusMessage('トランザクションが署名されました。ブロックチェーンで処理中...');
               
               try {
+                // Wait for transaction to be validated on XRPL
+                console.log('Transaction signed, waiting for ledger confirmation...');
+                
+                // Add a delay to ensure transaction is processed on ledger
+                // NFT transactions typically take 4-10 seconds to confirm
+                setStatusMessage('トランザクションを確認中... (約10秒かかります)');
+                await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+                
+                // Confirm the purchase on our server
                 await confirmPurchaseMutation.mutateAsync({
                   ticketId: result.ticketId,
                   transactionHash: data.txid,
                 });
 
                 setStatusMessage('NFTチケットの購入が完了しました！');
-                // Immediately notify parent to refetch access
+                
+                // Wait a bit more to ensure the NFT ownership is properly recorded
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Notify parent to refetch access
+                console.log('Purchase confirmed, notifying parent component...');
                 onPurchaseComplete();
-                // Also show success for a bit before UI changes
+                
+                // Show success message briefly
                 setTimeout(() => {
                   setStatusMessage('');
+                  setIsPurchasing(false);
+                  setQrUrl(null);
                 }, 2000);
               } catch (error) {
                 console.error('Failed to confirm purchase:', error);
-                setStatusMessage('購入の処理に失敗しました');
+                setStatusMessage('購入の処理に失敗しました。しばらく待ってからリロードしてください。');
                 setIsPurchasing(false);
                 setQrUrl(null);
               }

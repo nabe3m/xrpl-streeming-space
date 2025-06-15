@@ -1,7 +1,4 @@
 import {
-  Client,
-  Wallet,
-  xrpToDrops,
   NFTokenMintFlags,
   convertStringToHex,
 } from 'xrpl';
@@ -493,4 +490,64 @@ export async function checkNFTokenMinterRaw(
     console.error('Error in checkNFTokenMinterRaw:', error);
     return undefined;
   }
+}
+
+/**
+ * Wait for a transaction to be validated on the XRPL
+ * @param txHash - The transaction hash to verify
+ * @param maxAttempts - Maximum number of attempts (default: 10)
+ * @param delayMs - Delay between attempts in milliseconds (default: 2000)
+ * @returns true if validated, false if failed or timed out
+ */
+export async function waitForTransactionValidation(
+  txHash: string,
+  maxAttempts: number = 10,
+  delayMs: number = 2000
+): Promise<boolean> {
+  const client = await getXRPLClient();
+  
+  console.log(`Waiting for transaction ${txHash} to be validated...`);
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await client.request({
+        command: 'tx',
+        transaction: txHash,
+      });
+      
+      console.log(`Attempt ${attempt}: Transaction status:`, response.result.validated);
+      
+      if (response.result.validated === true) {
+        const transactionResult = (response.result.meta as any)?.TransactionResult;
+        console.log('Transaction validated successfully:', {
+          hash: txHash,
+          result: transactionResult,
+          attempts: attempt,
+        });
+        
+        // Check if transaction was successful
+        if (transactionResult && transactionResult !== 'tesSUCCESS') {
+          console.error('Transaction failed with result:', transactionResult);
+          return false;
+        }
+        
+        return true;
+      }
+    } catch (error: any) {
+      // If transaction not found, it might not be in the ledger yet
+      if (error.data?.error === 'txnNotFound') {
+        console.log(`Attempt ${attempt}: Transaction not found yet, waiting...`);
+      } else {
+        console.error(`Attempt ${attempt}: Error checking transaction:`, error);
+      }
+    }
+    
+    // Wait before next attempt
+    if (attempt < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  
+  console.error(`Transaction ${txHash} was not validated after ${maxAttempts} attempts`);
+  return false;
 }

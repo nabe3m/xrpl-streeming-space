@@ -1,5 +1,5 @@
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { generateNumericUid } from '~/lib/uid';
 
 interface UseRoomMonitoringProps {

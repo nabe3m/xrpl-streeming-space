@@ -12,12 +12,11 @@ export function HostControls({ roomStatus, roomId, onStartRoom, onEndRoom }: Hos
 
 	const handleEndRoom = () => {
 		console.log('🚀 handleEndRoom clicked', { roomId, roomStatus });
-		if (confirm('本当にルームを終了しますか？')) {
-			try {
-				onEndRoom();
-			} catch (error) {
-				console.error('❌ Error in handleEndRoom:', error);
-			}
+		// 確認ダイアログは親コンポーネント側で表示するため、ここでは表示しない
+		try {
+			onEndRoom();
+		} catch (error) {
+			console.error('❌ Error in handleEndRoom:', error);
 		}
 	};
 

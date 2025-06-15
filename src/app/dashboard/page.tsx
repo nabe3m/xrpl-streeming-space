@@ -196,12 +196,12 @@ export default function DashboardPage() {
 													>
 														支払い管理
 													</Link>
-													<Link
+													{/* <Link
 														href={`/dashboard/rooms/${room.id}/nft`}
 														className="rounded bg-green-600 px-4 py-2 font-semibold text-sm transition hover:bg-green-700"
 													>
 														NFT発行
-													</Link>
+													</Link> */}
 												</>
 											)}
 										</div>
@@ -218,22 +218,28 @@ export default function DashboardPage() {
 						<div className="space-y-4">
 							{participations?.items.map((participation) => (
 								<div key={participation.id} className="rounded-lg bg-white/5 p-4">
-									<h3 className="mb-2 font-semibold text-lg">{participation.room.title}</h3>
-									<p className="text-gray-400 text-sm">
-										ホスト:{' '}
-										{participation.room.creator.nickname ||
-											participation.room.creator.walletAddress.slice(0, 8)}
-										...
-									</p>
-									<p className="text-gray-400 text-sm">
-										参加日: {formatDate(participation.joinedAt)}
-									</p>
-									<p className="text-gray-400 text-sm">
-										滞在時間: {formatDuration(participation.totalTimeSeconds)}
-									</p>
-									<p className="text-sm text-yellow-400">
-										支払い金額: {participation.totalPaidXrp.toFixed(6)} XRP
-									</p>
+									<div className="flex items-start justify-between">
+										<div>
+											<h3 className="mb-2 font-semibold text-lg">{participation.room.title}</h3>
+											<p className="text-gray-400 text-sm">
+												ホスト:{' '}
+												{participation.room.creator.nickname ||
+													participation.room.creator.walletAddress.slice(0, 8)}
+												...
+											</p>
+											<p className="text-gray-400 text-sm">
+												参加日: {formatDate(participation.joinedAt)}
+											</p>
+											<p className="text-gray-400 text-sm">
+												滞在時間: {formatDuration(participation.totalTimeSeconds)}
+											</p>
+										</div>
+										{participation.room.status === 'LIVE' && (
+											<Link href={`/rooms/${participation.room.id}`} className="rounded bg-blue-600 px-4 py-2 font-semibold text-sm transition hover:bg-blue-700">
+												ルームへ
+											</Link>
+										)}
+									</div>
 								</div>
 							))}
 							{participations?.items.length === 0 && (

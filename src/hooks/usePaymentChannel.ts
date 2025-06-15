@@ -29,6 +29,7 @@ export function usePaymentChannel({
 	const paymentIntervalRef = useRef<NodeJS.Timeout | null>(null);
 	const totalPaidSecondsRef = useRef<number>(0);
 	const lastSignedAmountRef = useRef<number>(0);
+	const balanceInsufficientCalledRef = useRef<boolean>(false);
 
 	// 自分の支払いチャネルを取得
 	const {
@@ -73,9 +74,12 @@ export function usePaymentChannel({
 			// 残高不足エラーの場合のみ、onBalanceInsufficientコールバックを呼び出す
 			if (error.message && error.message.includes('残高不足')) {
 				console.error('⚠️ Balance insufficient detected from server');
-				if (onBalanceInsufficient) {
-					console.log('Calling onBalanceInsufficient callback due to payment error');
+				if (onBalanceInsufficient && !balanceInsufficientCalledRef.current) {
+					balanceInsufficientCalledRef.current = true;
+					console.log('Calling onBalanceInsufficient callback due to payment error (first time only)');
 					onBalanceInsufficient();
+				} else if (balanceInsufficientCalledRef.current) {
+					console.log('⚠️ onBalanceInsufficient already called from payment error, skipping');
 				}
 			} else {
 				console.log('❗ Error is not balance-related:', error.message);
@@ -99,6 +103,11 @@ export function usePaymentChannel({
 				clearInterval(paymentIntervalRef.current);
 				paymentIntervalRef.current = null;
 			}
+			
+			// Reset the balance insufficient flag when restarting the timer
+			// This allows the callback to be triggered again if balance becomes insufficient
+			balanceInsufficientCalledRef.current = false;
+			console.log('✅ Reset balanceInsufficientCalled flag on timer restart');
 
 			// Calculate initial seconds based on existing payment amount or resume point
 			let totalSeconds = 0;
@@ -230,8 +239,13 @@ export function usePaymentChannel({
 						paymentIntervalRef.current = null;
 
 						// 残高不足時のコールバックを実行（ホストの音声停止など）
-						if (onBalanceInsufficient) {
+						// ただし、すでに呼び出されている場合はスキップ（無限ループ防止）
+						if (onBalanceInsufficient && !balanceInsufficientCalledRef.current) {
+							balanceInsufficientCalledRef.current = true;
+							console.log('🚨 Calling onBalanceInsufficient callback (first time only)');
 							onBalanceInsufficient();
+						} else if (balanceInsufficientCalledRef.current) {
+							console.log('⚠️ onBalanceInsufficient already called, skipping to prevent infinite loop');
 						}
 						return;
 					}

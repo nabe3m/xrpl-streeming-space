@@ -187,6 +187,9 @@ export const nFTTicketRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const ticket = await ctx.db.nFTTicket.findUnique({
         where: { id: input.ticketId },
+        include: {
+          room: true,
+        },
       });
 
       if (!ticket) {
@@ -203,7 +206,22 @@ export const nFTTicketRouter = createTRPCRouter({
         });
       }
 
-      // Update ticket status to ACCEPTED after NFTokenAcceptOffer transaction
+      // Import the validation function
+      const { waitForTransactionValidation } = await import('~/lib/xrpl-nft');
+      
+      console.log('Verifying NFTokenAcceptOffer transaction:', input.transactionHash);
+      
+      // Wait for transaction to be validated on XRPL
+      const isValidated = await waitForTransactionValidation(input.transactionHash, 15, 2000);
+      
+      if (!isValidated) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Transaction not validated on XRPL. Please try again.',
+        });
+      }
+
+      // Update ticket status to ACCEPTED after NFTokenAcceptOffer transaction is validated
       await ctx.db.nFTTicket.update({
         where: { id: input.ticketId },
         data: {
@@ -211,6 +229,32 @@ export const nFTTicketRouter = createTRPCRouter({
           status: 'ACCEPTED', // Mark as accepted
         },
       });
+      
+      // Force a check to verify ownership on blockchain
+      const user = await ctx.db.user.findUnique({
+        where: { id: ctx.session.userId },
+      });
+      
+      if (user && ticket.room) {
+        console.log('Performing immediate ownership verification after purchase...');
+        const { checkNFTOwnershipByIssuerAndTaxon } = await import('~/lib/xrpl-nft');
+        
+        // Get room creator's wallet address
+        const roomCreator = await ctx.db.user.findUnique({
+          where: { id: ticket.room.creatorId },
+        });
+        
+        if (roomCreator) {
+          // Check with room creator as issuer
+          const ownership = await checkNFTOwnershipByIssuerAndTaxon(
+            user.walletAddress,
+            roomCreator.walletAddress,  // Room creator's wallet as issuer
+            ticket.room.nftTicketTaxon || 0
+          );
+          
+          console.log('Post-purchase ownership check with room creator as issuer:', ownership);
+        }
+      }
 
       return { success: true };
     }),
@@ -311,9 +355,23 @@ export const nFTTicketRouter = createTRPCRouter({
       const hasAccess = ownership.owns || !!dbTicket;
       console.log('Final access result:', hasAccess);
 
+      // Get additional NFT details if owned
+      let nftDetails = null;
+      const tokenId = ownership.tokenId || dbTicket?.tokenId;
+      if (hasAccess && tokenId) {
+        nftDetails = {
+          tokenId: tokenId,
+          issuer: ownership.owns ? room.creator.walletAddress : signatureWallet.address,
+          taxon: room.nftTicketTaxon || 0,
+          ownerWallet: user.walletAddress,
+          roomTitle: room.title,
+        };
+      }
+
       return {
         hasAccess,
         tokenId: ownership.tokenId || dbTicket?.tokenId,
+        nftDetails,
       };
     }),
 
