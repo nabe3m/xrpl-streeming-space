@@ -90,6 +90,7 @@ export default function CloseChannelsDevPage() {
 
 	const createPayloadMutation = api.xumm.createPaymentChannelClaimPayload.useMutation();
 	const getPayloadResultMutation = api.xumm.getPayloadResult.useMutation();
+	const deleteChannelMutation = api.paymentChannel.deleteByChannelId.useMutation();
 
 	const closeSelectedChannels = async () => {
 		if (selectedChannels.length === 0) {
@@ -154,6 +155,23 @@ export default function CloseChannelsDevPage() {
 					if (!signed) {
 						console.log('Transaction was not signed within timeout');
 						continue; // Skip to next channel
+					}
+
+					// チャネルクローズ成功後、DBから削除
+					try {
+						console.log(`Deleting channel ${channelId} from DB...`);
+						const deleteResult = await deleteChannelMutation.mutateAsync({
+							channelId: channelId,
+						});
+						
+						if (deleteResult.deleted) {
+							console.log(`✅ Channel ${channelId} deleted from DB`);
+						} else {
+							console.log(`Channel ${channelId} was not in DB`);
+						}
+					} catch (deleteError) {
+						console.error(`Failed to delete channel ${channelId} from DB:`, deleteError);
+						// Continue even if DB deletion fails
 					}
 				} catch (xummError) {
 					console.error('Xumm error:', xummError);

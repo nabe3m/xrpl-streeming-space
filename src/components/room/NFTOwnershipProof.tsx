@@ -23,7 +23,6 @@ export function NFTOwnershipProof({ nftDetails }: NFTOwnershipProofProps) {
   // Generate URLs for explorer
   const nftUrl = `${explorerBaseUrl}/nft/${nftDetails.tokenId}`;
   const ownerUrl = `${explorerBaseUrl}/accounts/${nftDetails.ownerWallet}`;
-  const issuerUrl = `${explorerBaseUrl}/accounts/${nftDetails.issuer}`;
 
   return (
     <div className="rounded-lg bg-green-900/20 border border-green-600/30 p-3 mb-4">

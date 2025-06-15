@@ -1020,4 +1020,33 @@ export const paymentChannelRouter = createTRPCRouter({
 
 			return { success: true };
 		}),
+
+	// Delete payment channel from DB (for dev use)
+	deleteByChannelId: protectedProcedure
+		.input(
+			z.object({
+				channelId: z.string(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			// Check if channel exists
+			const channel = await ctx.db.paymentChannel.findUnique({
+				where: { channelId: input.channelId },
+			});
+
+			if (!channel) {
+				// Channel doesn't exist in DB, that's ok
+				console.log('Payment channel not found in DB:', input.channelId);
+				return { success: true, deleted: false };
+			}
+
+			// Delete the channel
+			await ctx.db.paymentChannel.delete({
+				where: { channelId: input.channelId },
+			});
+
+			console.log('✅ Payment channel deleted from DB:', input.channelId);
+
+			return { success: true, deleted: true };
+		}),
 });
