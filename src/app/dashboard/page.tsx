@@ -190,12 +190,12 @@ export default function DashboardPage() {
 											)}
 											{room.status === 'ENDED' && room._count.participants > 0 && (
 												<>
-													<Link
+													{/* <Link
 														href={`/dashboard/rooms/${room.id}/payment-channels`}
 														className="rounded bg-purple-600 px-4 py-2 font-semibold text-sm transition hover:bg-purple-700"
 													>
 														支払い管理
-													</Link>
+													</Link> */}
 													{/* <Link
 														href={`/dashboard/rooms/${room.id}/nft`}
 														className="rounded bg-green-600 px-4 py-2 font-semibold text-sm transition hover:bg-green-700"
